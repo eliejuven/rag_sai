@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException
 
 from app.embeddings.client import embed_texts
 from app.search.vector_store import vector_store
+from app.search.keyword_search import bm25_index
+from app.search.reranker import reciprocal_rank_fusion
 from app.query.intent import detect_intent
 from app.query.transform import transform_query
 from app.models import QueryRequest, QueryResponse, ChunkResult
@@ -35,10 +37,15 @@ async def query_knowledge_base(request: QueryRequest):
     search_query = await transform_query(question)
 
     query_vectors = await embed_texts([search_query])
-    results = vector_store.search(query_vectors[0], top_k=SIMILARITY_TOP_K)
+    semantic_results = vector_store.search(query_vectors[0], top_k=SIMILARITY_TOP_K)
+    keyword_results = bm25_index.search(search_query, top_k=SIMILARITY_TOP_K)
+
+    merged = reciprocal_rank_fusion(
+        semantic_results, keyword_results, top_k=SIMILARITY_TOP_K
+    )
 
     chunks = []
-    for chunk_index, score in results:
+    for chunk_index, score in merged:
         chunk_data = storage.chunks[chunk_index]
         chunks.append(
             ChunkResult(

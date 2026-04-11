@@ -21,4 +21,5 @@ class ChunkResult(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+    grounded: bool
     chunks: list[ChunkResult]

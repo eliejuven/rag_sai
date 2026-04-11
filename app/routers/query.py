@@ -17,6 +17,10 @@ GENERAL_SYSTEM_PROMPT = "You are a friendly assistant. Answer the user naturally
 router = APIRouter()
 
 
+def _general_response(answer: str) -> QueryResponse:
+    return QueryResponse(answer=answer, grounded=False, chunks=[])
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query_knowledge_base(request: QueryRequest):
     """Query the knowledge base with a question. Returns relevant chunks."""
@@ -28,11 +32,11 @@ async def query_knowledge_base(request: QueryRequest):
 
     if intent == "chat":
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
-        return QueryResponse(answer=answer, chunks=[])
+        return _general_response(answer)
 
     if vector_store.size == 0:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
-        return QueryResponse(answer=answer, chunks=[])
+        return _general_response(answer)
 
     search_query = await transform_query(question)
 
@@ -44,7 +48,7 @@ async def query_knowledge_base(request: QueryRequest):
 
     if best_semantic_score < SIMILARITY_THRESHOLD:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
-        return QueryResponse(answer=answer, chunks=[])
+        return _general_response(answer)
 
     merged = reciprocal_rank_fusion(
         semantic_results, keyword_results, top_k=SIMILARITY_TOP_K
@@ -67,4 +71,4 @@ async def query_knowledge_base(request: QueryRequest):
     user_message = build_rag_prompt(question, chunk_dicts)
     answer = await chat_completion(RAG_SYSTEM_PROMPT, user_message, temperature=0.2)
 
-    return QueryResponse(answer=answer, chunks=chunks)
+    return QueryResponse(answer=answer, grounded=True, chunks=chunks)

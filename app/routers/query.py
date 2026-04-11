@@ -9,8 +9,10 @@ from app.query.transform import transform_query
 from app.generation.llm import chat_completion
 from app.generation.prompts import RAG_SYSTEM_PROMPT, build_rag_prompt
 from app.models import QueryRequest, QueryResponse, ChunkResult
-from app.config import SIMILARITY_TOP_K
+from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
 from app import storage
+
+GENERAL_SYSTEM_PROMPT = "You are a friendly assistant. Answer the user naturally and concisely."
 
 router = APIRouter()
 
@@ -25,22 +27,24 @@ async def query_knowledge_base(request: QueryRequest):
     intent = await detect_intent(question)
 
     if intent == "chat":
-        return QueryResponse(
-            answer="Hello! I'm a document Q&A assistant. Upload some PDFs and ask me questions about them.",
-            chunks=[],
-        )
+        answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+        return QueryResponse(answer=answer, chunks=[])
 
     if vector_store.size == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="No documents ingested yet. Upload PDFs first.",
-        )
+        answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+        return QueryResponse(answer=answer, chunks=[])
 
     search_query = await transform_query(question)
 
     query_vectors = await embed_texts([search_query])
     semantic_results = vector_store.search(query_vectors[0], top_k=SIMILARITY_TOP_K)
     keyword_results = bm25_index.search(search_query, top_k=SIMILARITY_TOP_K)
+
+    best_semantic_score = semantic_results[0][1] if semantic_results else 0.0
+
+    if best_semantic_score < SIMILARITY_THRESHOLD:
+        answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+        return QueryResponse(answer=answer, chunks=[])
 
     merged = reciprocal_rank_fusion(
         semantic_results, keyword_results, top_k=SIMILARITY_TOP_K

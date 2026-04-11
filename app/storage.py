@@ -1,15 +1,9 @@
-"""In-memory storage for parsed documents.
+"""In-memory storage for parsed documents and their chunks.
 
-Structure:
-    documents = {
-        "<document_id>": {
-            "filename": "report.pdf",
-            "pages": [
-                {"page_number": 1, "text": "..."},
-                {"page_number": 2, "text": "..."},
-            ]
-        }
-    }
+documents: raw parsed pages, keyed by document_id.
+chunks: list of all chunks across all documents, used for search.
 """
 
 documents: dict[str, dict] = {}
+
+chunks: list[dict] = []

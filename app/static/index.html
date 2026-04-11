@@ -4,9 +4,353 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RAG Pipeline</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .upload-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .upload-btn {
+            background: #1a1a1a;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .upload-btn:hover { background: #333; }
+        .upload-btn:disabled { background: #999; cursor: not-allowed; }
+
+        .upload-status {
+            font-size: 13px;
+            color: #666;
+        }
+
+        #file-input { display: none; }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message {
+            max-width: 720px;
+            width: 100%;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        .message.user {
+            background: #1a1a1a;
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 12px 12px 4px 12px;
+            align-self: flex-end;
+            margin-left: auto;
+            max-width: 480px;
+            width: fit-content;
+        }
+
+        .message.assistant {
+            background: #fff;
+            padding: 16px 20px;
+            border-radius: 12px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .message.assistant .answer { margin-bottom: 12px; }
+
+        .sources {
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+            margin-top: 4px;
+        }
+
+        .sources-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .source-chip {
+            display: inline-block;
+            background: #f0f0f0;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #555;
+            margin: 2px 4px 2px 0;
+        }
+
+        .message.error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        .typing-indicator {
+            max-width: 720px;
+            margin: 0 auto;
+            color: #888;
+            font-size: 14px;
+            padding: 8px 0;
+        }
+
+        .input-bar {
+            background: #fff;
+            border-top: 1px solid #e0e0e0;
+            padding: 16px 24px;
+            flex-shrink: 0;
+        }
+
+        .input-wrapper {
+            max-width: 720px;
+            margin: 0 auto;
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-wrapper input {
+            flex: 1;
+            padding: 10px 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-wrapper input:focus { border-color: #1a1a1a; }
+
+        .send-btn {
+            background: #1a1a1a;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .send-btn:hover { background: #333; }
+        .send-btn:disabled { background: #999; cursor: not-allowed; }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #888;
+            gap: 8px;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-state h2 {
+            font-size: 20px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .empty-state p { font-size: 14px; }
+    </style>
 </head>
 <body>
-    <h1>RAG Pipeline</h1>
-    <p>Chat UI coming soon.</p>
+    <header>
+        <h1>RAG Pipeline</h1>
+        <div class="upload-area">
+            <span class="upload-status" id="upload-status">No documents loaded</span>
+            <input type="file" id="file-input" multiple accept=".pdf">
+            <button class="upload-btn" id="upload-btn" onclick="document.getElementById('file-input').click()">
+                Upload PDFs
+            </button>
+        </div>
+    </header>
+
+    <div class="chat-container" id="chat">
+        <div class="empty-state" id="empty-state">
+            <h2>Document Q&A</h2>
+            <p>Upload PDF files, then ask questions about their content.</p>
+        </div>
+    </div>
+
+    <div class="input-bar">
+        <div class="input-wrapper">
+            <input type="text" id="question-input" placeholder="Ask a question about your documents..." autofocus>
+            <button class="send-btn" id="send-btn" onclick="sendQuestion()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const chat = document.getElementById("chat");
+        const emptyState = document.getElementById("empty-state");
+        const questionInput = document.getElementById("question-input");
+        const sendBtn = document.getElementById("send-btn");
+        const fileInput = document.getElementById("file-input");
+        const uploadBtn = document.getElementById("upload-btn");
+        const uploadStatus = document.getElementById("upload-status");
+
+        let totalDocs = 0;
+        let totalChunks = 0;
+
+        fileInput.addEventListener("change", handleUpload);
+        questionInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !sendBtn.disabled) sendQuestion();
+        });
+
+        async function handleUpload() {
+            const files = fileInput.files;
+            if (!files.length) return;
+
+            uploadBtn.disabled = true;
+            uploadStatus.textContent = "Uploading...";
+
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append("files", file);
+            }
+
+            try {
+                const res = await fetch("/ingest", { method: "POST", body: formData });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    uploadStatus.textContent = data.detail || "Upload failed";
+                    return;
+                }
+
+                totalDocs += data.document_ids.length;
+                totalChunks += data.total_chunks;
+                uploadStatus.textContent = `${totalDocs} doc(s), ${totalChunks} chunks`;
+            } catch (err) {
+                uploadStatus.textContent = "Upload failed";
+            } finally {
+                uploadBtn.disabled = false;
+                fileInput.value = "";
+            }
+        }
+
+        async function sendQuestion() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            emptyState?.remove();
+            appendMessage("user", question);
+            questionInput.value = "";
+            sendBtn.disabled = true;
+
+            const typing = showTyping();
+
+            try {
+                const res = await fetch("/query", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question }),
+                });
+                const data = await res.json();
+                typing.remove();
+
+                if (!res.ok) {
+                    appendMessage("error", data.detail || "Something went wrong.");
+                    return;
+                }
+
+                appendAssistantMessage(data.answer, data.chunks);
+            } catch (err) {
+                typing.remove();
+                appendMessage("error", "Failed to connect to the server.");
+            } finally {
+                sendBtn.disabled = false;
+                questionInput.focus();
+            }
+        }
+
+        function appendMessage(type, text) {
+            const div = document.createElement("div");
+            div.className = `message ${type}`;
+            div.textContent = text;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function appendAssistantMessage(answer, chunks) {
+            const div = document.createElement("div");
+            div.className = "message assistant";
+
+            let html = `<div class="answer">${escapeHtml(answer)}</div>`;
+
+            if (chunks && chunks.length > 0) {
+                const uniqueSources = [...new Set(
+                    chunks.map(c => `${c.filename} (p.${c.page_number})`)
+                )];
+                html += `<div class="sources">`;
+                html += `<div class="sources-title">Sources</div>`;
+                html += uniqueSources.map(s => `<span class="source-chip">${escapeHtml(s)}</span>`).join("");
+                html += `</div>`;
+            }
+
+            div.innerHTML = html;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function showTyping() {
+            const div = document.createElement("div");
+            div.className = "typing-indicator";
+            div.textContent = "Thinking...";
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+            return div;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+    </script>
 </body>
 </html>

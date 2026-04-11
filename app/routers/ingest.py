@@ -4,6 +4,8 @@ from fastapi import APIRouter, UploadFile, HTTPException
 
 from app.ingestion.pdf_parser import extract_text_from_pdf
 from app.ingestion.chunker import chunk_pages
+from app.embeddings.client import embed_texts
+from app.search.vector_store import vector_store
 from app.models import IngestResponse
 from app import storage
 
@@ -47,7 +49,13 @@ async def ingest_pdfs(files: list[UploadFile]):
             chunk["document_id"] = doc_id
             chunk["filename"] = file.filename
 
+        start_index = len(storage.chunks)
         storage.chunks.extend(doc_chunks)
+
+        chunk_texts = [c["text"] for c in doc_chunks]
+        vectors = await embed_texts(chunk_texts)
+        chunk_indices = list(range(start_index, start_index + len(doc_chunks)))
+        vector_store.add(vectors, chunk_indices)
 
         document_ids.append(doc_id)
         total_pages += len(pages)

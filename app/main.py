@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from app.routers import ingest
+from app.routers import ingest, query
 
 app = FastAPI(
     title="RAG Pipeline",
@@ -11,6 +11,7 @@ app = FastAPI(
 )
 
 app.include_router(ingest.router)
+app.include_router(query.router)
 
 
 @app.get("/health")

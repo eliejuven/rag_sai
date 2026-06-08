@@ -145,6 +145,67 @@
             padding: 8px 0;
         }
 
+        .progress-container {
+            max-width: 720px;
+            align-self: flex-start;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 4px 0;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #666;
+            transition: color 0.2s;
+        }
+
+        .progress-step.active {
+            color: #aaa;
+        }
+
+        .progress-step.error-step {
+            color: #f87171;
+        }
+
+        .progress-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #444;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+
+        .progress-step.active .progress-dot {
+            background: #8ab4f8;
+            animation: pulse 1s infinite;
+        }
+
+        .progress-step.done .progress-dot {
+            background: #4ade80;
+            animation: none;
+        }
+
+        .progress-step.error-step .progress-dot {
+            background: #f87171;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .grounded-badge.cvm {
+            background: #1a2a3a;
+            color: #7dd3fc;
+            border: 1px solid #2d4a5a;
+        }
+
         .ref-panel {
             position: fixed;
             bottom: 80px;
@@ -403,25 +464,83 @@
             questionInput.value = "";
             sendBtn.disabled = true;
 
-            const typing = showTyping();
+            // Create a live progress container in the chat
+            const progressContainer = document.createElement("div");
+            progressContainer.className = "progress-container";
+            chat.appendChild(progressContainer);
+            chat.scrollTop = chat.scrollHeight;
+
+            let lastStep = null;
+
+            function addProgressStep(message, isError = false) {
+                // Mark previous step as done
+                if (lastStep) {
+                    lastStep.classList.remove("active");
+                    if (!lastStep.classList.contains("error-step")) {
+                        lastStep.classList.add("done");
+                    }
+                }
+                const step = document.createElement("div");
+                step.className = `progress-step ${isError ? "error-step" : "active"}`;
+                step.innerHTML = `<span class="progress-dot"></span><span>${escapeHtml(message)}</span>`;
+                progressContainer.appendChild(step);
+                lastStep = step;
+                chat.scrollTop = chat.scrollHeight;
+            }
 
             try {
-                const res = await fetch("/query", {
+                const res = await fetch("/query/stream", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ question }),
                 });
-                const data = await res.json();
-                typing.remove();
 
                 if (!res.ok) {
+                    const data = await res.json();
+                    progressContainer.remove();
                     appendMessage("error", data.detail || "Something went wrong.");
                     return;
                 }
 
-                appendAssistantMessage(data.answer, data.chunks, data.grounded);
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split("\n\n");
+                    buffer = parts.pop(); // keep incomplete chunk
+
+                    for (const part of parts) {
+                        const line = part.trim();
+                        if (!line.startsWith("data:")) continue;
+                        let event;
+                        try { event = JSON.parse(line.slice(5).trim()); }
+                        catch { continue; }
+
+                        if (event.type === "progress") {
+                            const isError = event.message.startsWith("ERRO:");
+                            addProgressStep(event.message, isError);
+
+                        } else if (event.type === "answer") {
+                            // Mark last step done, then replace progress with answer
+                            if (lastStep) {
+                                lastStep.classList.remove("active");
+                                lastStep.classList.add("done");
+                            }
+                            progressContainer.remove();
+                            appendAssistantMessage(event.answer, event.chunks, event.grounded);
+
+                        } else if (event.type === "error") {
+                            addProgressStep(`Erro: ${event.message}`, true);
+                        }
+                    }
+                }
             } catch (err) {
-                typing.remove();
+                progressContainer.remove();
                 appendMessage("error", "Failed to connect to the server.");
             } finally {
                 sendBtn.disabled = false;
@@ -446,7 +565,12 @@
             let html = "";
 
             if (grounded) {
-                html += `<span class="grounded-badge yes">Grounded in documents</span>`;
+                const isCvm = (chunks || []).some(c => c.filename && c.filename.includes("(CVM)"));
+                if (isCvm) {
+                    html += `<span class="grounded-badge cvm">Grounded in CVM data</span>`;
+                } else {
+                    html += `<span class="grounded-badge yes">Grounded in documents</span>`;
+                }
             } else if (chunks !== undefined) {
                 html += `<span class="grounded-badge no">General knowledge</span>`;
             }
@@ -522,15 +646,6 @@
 
         function closeRefPanel() {
             refPanel.style.display = "none";
-        }
-
-        function showTyping() {
-            const div = document.createElement("div");
-            div.className = "typing-indicator";
-            div.textContent = "Thinking...";
-            chat.appendChild(div);
-            chat.scrollTop = chat.scrollHeight;
-            return div;
         }
 
         function escapeHtml(text) {

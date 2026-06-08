@@ -139,17 +139,37 @@ async def query_stream(request: QueryRequest):
                 })
                 return
 
-            # ---- 2. First search attempt ----
+            # ---- 2. Extract company early so we can validate search results ----
+            await emit("Identificando empresa na pergunta...")
+            company_name = await extract_company(question)
+            if company_name:
+                await emit(f"Empresa detectada: {company_name}")
+            else:
+                await emit("Nenhuma empresa específica detectada.")
+
+            # ---- 3. First search attempt ----
             await emit("Buscando na base de conhecimento...")
             result = None
             if vector_store.size > 0:
                 result = await _search_and_answer(question)
 
-            # ---- 3. If no relevant data found → try scraping ----
-            if result is None:
-                await emit("Dados insuficientes na base. Identificando empresa...")
-                company_name = await extract_company(question)
+            # If search returned results but they belong to a DIFFERENT company,
+            # discard them and force a scrape for the right company.
+            if result is not None and company_name:
+                norm = company_name.lower()
+                chunks_match = any(
+                    norm.split()[0] in c.filename.lower()
+                    for c in result.chunks
+                )
+                if not chunks_match:
+                    await emit(
+                        f"Resultados encontrados não são sobre {company_name}. "
+                        "Buscando dados específicos..."
+                    )
+                    result = None
 
+            # ---- 4. If no relevant data found → try scraping ----
+            if result is None:
                 if company_name:
                     scraped = await scrape_and_ingest(company_name, progress=emit)
 

@@ -17,40 +17,27 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are a Brazilian financial data assistant specializing in B3-listed companies.
 
-Your task: given a user question, extract the name of a Brazilian listed company (if any).
+Your task: given a user question, extract the name of a Brazilian company (if any).
 
 Rules:
-- Resolve brand names and nicknames to their official registered name:
+- Extract ANY company name mentioned, whether it is famous or not.
+- For well-known aliases, resolve to the official name:
     "Vivo" → "Telefônica Brasil"
-    "Magalu" or "Magazine Luiza" → "Magazine Luiza"
+    "Magalu" → "Magazine Luiza"
     "Pão de Açúcar" or "GPA" → "Grupo Pão de Açúcar"
-    "Bradesco" → "Banco Bradesco"
+    "Bradesco" → "Banco Bradeco"
     "Itaú" → "Itaú Unibanco"
-    "BB" or "Banco do Brasil" → "Banco do Brasil"
+    "BB" → "Banco do Brasil"
     "Petrobras" → "Petrobras"
-    "Vale" → "Vale"
-    "Ambev" → "Ambev"
-    "Embraer" → "Embraer"
-    "Eletrobras" → "Eletrobras"
-    "Cemig" → "Cemig"
-    "Copel" → "Copel"
-    "Sabesp" → "Sabesp"
-    "Localiza" → "Localiza"
-    "Hapvida" → "Hapvida"
-    "Fleury" → "Fleury"
-    "TOTVS" → "TOTVS"
-    "Natura" → "Natura"
-    "Arezzo" → "Arezzo"
-    "WEG" → "WEG"
-    For any other company, return the most commonly used official name.
-- If the question mentions a ticker (e.g. PETR4, ABEV3), extract the company name
-  (e.g. "Petrobras", "Ambev") — do NOT return the ticker itself.
-- If no Brazilian listed company is mentioned, return null for company_name.
-- If multiple companies are mentioned, return only the most prominent one
-  (the one the question is primarily about).
+- For any company you do NOT recognise as a famous alias, return its name
+  exactly as written in the question (e.g. "Axia Energia", "Copasa", "Transmissora Aliança").
+- If the question mentions a ticker (e.g. PETR4, ABEV3), return the company
+  name instead (e.g. "Petrobras", "Ambev").
+- If the question is general (no company mentioned), return null.
+- If multiple companies are mentioned, return the most prominent one.
 
 Reply with ONLY valid JSON in this exact format:
-{"company_name": "Official Company Name"} or {"company_name": null}"""
+{"company_name": "Company Name"} or {"company_name": null}"""
 
 
 async def extract_company(question: str) -> str | None:

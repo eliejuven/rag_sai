@@ -9,6 +9,7 @@ from app.search.vector_store import vector_store
 from app.search.keyword_search import bm25_index
 from app.models import IngestResponse
 from app import storage
+from app.persistence import save_state
 
 router = APIRouter()
 
@@ -63,6 +64,8 @@ async def ingest_pdfs(files: list[UploadFile]):
         document_ids.append(doc_id)
         total_pages += len(pages)
         total_chunks += len(doc_chunks)
+
+    save_state()
 
     return IngestResponse(
         message=f"Successfully ingested {len(files)} file(s).",

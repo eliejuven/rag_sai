@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.routers import ingest, query
+from app.persistence import load_state
 
 app = FastAPI(
     title="RAG Pipeline",
@@ -12,6 +13,11 @@ app = FastAPI(
 
 app.include_router(ingest.router)
 app.include_router(query.router)
+
+
+@app.on_event("startup")
+async def startup():
+    load_state()
 
 
 @app.get("/health")

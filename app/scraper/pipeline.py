@@ -25,6 +25,7 @@ from app.embeddings.client import embed_texts
 from app.search.vector_store import vector_store
 from app.search.keyword_search import bm25_index
 from app import storage
+from app.persistence import save_state
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,7 @@ async def scrape_and_ingest(
         "chunk_indices": chunk_indices,
     }
     _save_metadata(metadata)
+    save_state()
 
     await emit(
         f"Concluído! {display_name}: {len(pages)} demonstrações, "

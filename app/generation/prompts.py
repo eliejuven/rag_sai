@@ -15,7 +15,7 @@ def build_system_prompt(chunks: list[dict]) -> str:
     return _build_system_prompt(RAG_SYSTEM_PROMPT, chunks)
 
 
-def build_rag_prompt(question: str, chunks: list[dict]) -> str:
+def build_rag_prompt(question: str, chunks: list[dict], alias_hint: str | None = None) -> str:
     """Build the user message with retrieved chunks as context."""
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
@@ -24,7 +24,9 @@ def build_rag_prompt(question: str, chunks: list[dict]) -> str:
 
     context = "\n\n---\n\n".join(context_parts)
 
-    return f"""Context from the knowledge base:
+    alias_block = f"Important: {alias_hint}\n\n" if alias_hint else ""
+
+    return f"""{alias_block}Context from the knowledge base:
 
 {context}
 

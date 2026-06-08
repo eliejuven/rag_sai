@@ -31,7 +31,7 @@ def _general_response(answer: str) -> QueryResponse:
 # Shared search logic (used by both endpoints)
 # ---------------------------------------------------------------------------
 
-async def _search_and_answer(question: str) -> QueryResponse:
+async def _search_and_answer(question: str, alias_hint: str | None = None) -> QueryResponse:
     """Run the full RAG search pipeline and return a QueryResponse."""
     search_query = await transform_query(question)
     query_vectors = await embed_texts([search_query])
@@ -60,7 +60,7 @@ async def _search_and_answer(question: str) -> QueryResponse:
         )
         chunk_dicts.append(chunk_data)
 
-    user_message = build_rag_prompt(question, chunk_dicts)
+    user_message = build_rag_prompt(question, chunk_dicts, alias_hint=alias_hint)
     system_prompt = build_system_prompt(chunk_dicts)
     answer = await chat_completion(system_prompt, user_message, temperature=0.2)
 
@@ -142,8 +142,18 @@ async def query_stream(request: QueryRequest):
             # ---- 2. Extract company early so we can validate search results ----
             await emit("Identificando empresa na pergunta...")
             company_name = await extract_company(question)
+            alias_hint = None
             if company_name:
                 await emit(f"Empresa detectada: {company_name}")
+                # Build alias hint if the official name differs from what user typed
+                if company_name.lower() not in question.lower():
+                    alias_hint = (
+                        f"The user is asking about '{company_name}'. "
+                        f"In the retrieved documents this company may appear under its "
+                        f"official registered name (e.g. 'TELEFÔNICA BRASIL' for 'Vivo', "
+                        f"'PETRÓLEO BRASILEIRO' for 'Petrobras'). "
+                        f"Treat all such names as referring to the same company."
+                    )
             else:
                 await emit("Nenhuma empresa específica detectada.")
 
@@ -151,7 +161,7 @@ async def query_stream(request: QueryRequest):
             await emit("Buscando na base de conhecimento...")
             result = None
             if vector_store.size > 0:
-                result = await _search_and_answer(question)
+                result = await _search_and_answer(question, alias_hint=alias_hint)
 
             # If search returned results but they belong to a DIFFERENT company,
             # discard them and force a scrape for the right company.
@@ -192,7 +202,7 @@ async def query_stream(request: QueryRequest):
 
                     # Re-search now that data is indexed
                     await emit("Buscando na base atualizada...")
-                    result = await _search_and_answer(question)
+                    result = await _search_and_answer(question, alias_hint=alias_hint)
 
                 if result is None:
                     # Still nothing — general fallback

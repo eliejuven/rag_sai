@@ -97,12 +97,27 @@
         .source-chip {
             display: inline-flex;
             align-items: center;
+            gap: 6px;
             background: #2f2f2f;
             padding: 4px 10px;
             border-radius: 6px;
             font-size: 12px;
             color: #999;
             border: 1px solid #3a3a3a;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+
+        .source-chip:hover {
+            background: #3a3a3a;
+            color: #ccc;
+            border-color: #555;
+        }
+
+        .source-chip .chip-num {
+            font-weight: 700;
+            color: #8ab4f8;
+            font-size: 11px;
         }
 
         .grounded-badge {
@@ -248,6 +263,23 @@
         }
 
         .ref-panel .ref-close:hover { color: #fff; }
+
+        .ref-panel .ref-content {
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #ccc;
+            line-height: 1.6;
+        }
+
+        .ref-panel .ref-meta {
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #3a3a3a;
+        }
 
         .input-bar {
             background: #2f2f2f;
@@ -409,7 +441,11 @@
             if (e.key === "Enter" && !sendBtn.disabled) sendQuestion();
         });
         document.addEventListener("click", (e) => {
-            if (!refPanel.contains(e.target) && !e.target.classList.contains("citation")) {
+            if (
+                !refPanel.contains(e.target) &&
+                !e.target.classList.contains("citation") &&
+                !e.target.closest(".source-chip")
+            ) {
                 closeRefPanel();
             }
         });
@@ -578,11 +614,13 @@
             html += `<div class="answer">${formatAnswer(answer, chunks)}</div>`;
 
             if (chunks && chunks.length > 0) {
-                const uniqueSources = [...new Set(
-                    chunks.map(c => `${c.filename} (p.${c.page_number})`)
-                )];
                 html += `<div class="sources">`;
-                html += uniqueSources.map(s => `<span class="source-chip">${escapeHtml(s)}</span>`).join("");
+                chunks.forEach((c, i) => {
+                    html += `<span class="source-chip" onclick="showRef(${i})">
+                        <span class="chip-num">[${i + 1}]</span>
+                        ${escapeHtml(c.filename)} — p.${c.page_number}
+                    </span>`;
+                });
                 html += `</div>`;
             }
 
@@ -639,8 +677,11 @@
             const chunk = lastChunks[index];
             if (!chunk) return;
 
-            refHeader.textContent = `Source [${index + 1}] — ${chunk.filename} (page ${chunk.page_number})`;
-            refBody.textContent = chunk.text;
+            refHeader.textContent = `[${index + 1}] ${chunk.filename} — page ${chunk.page_number}`;
+            refBody.innerHTML = `
+                <div class="ref-content">${escapeHtml(chunk.text)}</div>
+                <div class="ref-meta">Relevance score: ${chunk.score} &nbsp;·&nbsp; ${chunk.filename}</div>
+            `;
             refPanel.style.display = "block";
         }
 

@@ -7,7 +7,7 @@ from app.search.reranker import reciprocal_rank_fusion
 from app.query.intent import detect_intent
 from app.query.transform import transform_query
 from app.generation.llm import chat_completion
-from app.generation.prompts import RAG_SYSTEM_PROMPT, build_rag_prompt
+from app.generation.prompts import build_system_prompt, build_rag_prompt
 from app.models import QueryRequest, QueryResponse, ChunkResult
 from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
 from app import storage
@@ -69,6 +69,7 @@ async def query_knowledge_base(request: QueryRequest):
         chunk_dicts.append(chunk_data)
 
     user_message = build_rag_prompt(question, chunk_dicts)
-    answer = await chat_completion(RAG_SYSTEM_PROMPT, user_message, temperature=0.2)
+    system_prompt = build_system_prompt(chunk_dicts)
+    answer = await chat_completion(system_prompt, user_message, temperature=0.2)
 
     return QueryResponse(answer=answer, grounded=True, chunks=chunks)

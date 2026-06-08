@@ -1,3 +1,5 @@
+from app.generation.skills import build_system_prompt as _build_system_prompt
+
 RAG_SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided document excerpts.
 
 Rules:
@@ -6,6 +8,11 @@ Rules:
 - Cite your sources by referencing the chunk numbers (e.g. [1], [2]).
 - Be concise and direct.
 - Do not make up information that is not in the context."""
+
+
+def build_system_prompt(chunks: list[dict]) -> str:
+    """Return RAG_SYSTEM_PROMPT with relevant skills appended based on chunk content."""
+    return _build_system_prompt(RAG_SYSTEM_PROMPT, chunks)
 
 
 def build_rag_prompt(question: str, chunks: list[dict]) -> str:

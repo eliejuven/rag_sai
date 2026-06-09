@@ -40,6 +40,17 @@ Reply with ONLY valid JSON in this exact format:
 {"company_name": "Company Name"} or {"company_name": null}"""
 
 
+def extract_year(question: str) -> int | None:
+    """
+    Extract a specific year mentioned in the question using regex.
+    Returns the first 4-digit year found (2000–2099), or None.
+    """
+    matches = re.findall(r'\b(20\d{2})\b', question)
+    if matches:
+        return int(matches[0])
+    return None
+
+
 async def extract_company(question: str) -> str | None:
     """
     Extract and resolve a Brazilian listed company name from a user question.

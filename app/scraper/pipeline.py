@@ -57,13 +57,21 @@ def _save_metadata(metadata: dict) -> None:
     )
 
 
-def _is_stale(metadata: dict, cnpj: str) -> bool:
-    """Return True if the company has never been scraped or data is older than STALENESS_DAYS."""
+def _is_stale(metadata: dict, cnpj: str, requested_year: int | None = None) -> bool:
+    """Return True if the company has never been scraped, data is old, or a
+    requested year is missing from the already-indexed data."""
     if cnpj not in metadata:
         return True
     last_scraped_str = metadata[cnpj].get("last_scraped")
     if not last_scraped_str:
         return True
+
+    # If the user asked about a specific year not yet indexed, force re-scrape
+    if requested_year:
+        indexed_years = metadata[cnpj].get("dfp_years", [])
+        if requested_year not in indexed_years:
+            return True
+
     last_scraped = datetime.fromisoformat(last_scraped_str)
     return datetime.now() - last_scraped > timedelta(days=STALENESS_DAYS)
 
@@ -75,6 +83,7 @@ def _is_stale(metadata: dict, cnpj: str) -> bool:
 async def scrape_and_ingest(
     company_query: str,
     progress: ProgressCallback | None = None,
+    requested_year: int | None = None,
 ) -> dict:
     """
     Full pipeline: resolve company → check staleness → scrape → ingest.
@@ -119,7 +128,7 @@ async def scrape_and_ingest(
     metadata = _load_metadata()
     cnpj = company["cnpj"]
 
-    if not _is_stale(metadata, cnpj):
+    if not _is_stale(metadata, cnpj, requested_year=requested_year):
         last = metadata[cnpj]["last_scraped"][:10]
         await emit(
             f"Dados de {display_name} já estão indexados e atualizados "
@@ -139,10 +148,21 @@ async def scrape_and_ingest(
     await emit(f"Baixando demonstrações financeiras de {display_name} na CVM...")
     await emit("  → DFP (balanços anuais)...")
 
+    # Build year lists — always include requested_year if provided and not in default range
+    from datetime import date as _date
+    current_year = _date.today().year
+    dfp_years = [current_year - 1, current_year - 2]
+    itr_years = [current_year, current_year - 1]
+    if requested_year and requested_year not in dfp_years:
+        dfp_years.append(requested_year)
+        dfp_years = sorted(set(dfp_years), reverse=True)
+
     try:
         pages = fetch_statements(
             cnpj=cnpj,
             company_name=display_name,
+            dfp_years=dfp_years,
+            itr_years=itr_years,
         )
     except Exception as e:
         msg = f"Falha ao baixar dados da CVM para {display_name}: {e}"
@@ -203,6 +223,8 @@ async def scrape_and_ingest(
         "pages_fetched": len(pages),
         "chunks_added": len(doc_chunks),
         "chunk_indices": chunk_indices,
+        "dfp_years": dfp_years,
+        "itr_years": itr_years,
     }
     _save_metadata(metadata)
     save_state()

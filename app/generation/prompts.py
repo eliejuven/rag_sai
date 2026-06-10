@@ -33,3 +33,15 @@ def build_rag_prompt(question: str, chunks: list[dict], alias_hint: str | None =
 ---
 
 Question: {question}"""
+
+
+def build_market_prompt(question: str, market_text: str, alias_hint: str | None = None) -> str:
+    """Build the user message for a market data query."""
+    alias_block = f"Important: {alias_hint}\n\n" if alias_hint else ""
+    return f"""{alias_block}Market data from Yahoo Finance:
+
+{market_text}
+
+---
+
+Question: {question}"""

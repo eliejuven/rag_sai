@@ -12,7 +12,8 @@ from app.query.intent import detect_intent
 from app.query.transform import transform_query
 from app.query.company_extractor import extract_company, extract_year
 from app.generation.llm import chat_completion
-from app.generation.prompts import build_system_prompt, build_rag_prompt
+from app.generation.prompts import build_system_prompt, build_rag_prompt, build_market_prompt, RAG_SYSTEM_PROMPT
+from app.scraper.market_data import resolve_ticker, fetch_market_data, format_market_context
 from app.scraper.pipeline import scrape_and_ingest
 from app.models import QueryRequest, QueryResponse, ChunkResult
 from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
@@ -176,6 +177,49 @@ async def query_stream(request: QueryRequest):
                     "grounded": False,
                     "chunks": [],
                 })
+                return
+
+            if intent == "market":
+                await emit("Identificando empresa na pergunta...")
+                company_name = await extract_company(question)
+                if not company_name:
+                    await emit("Nenhuma empresa detectada. Respondendo com conhecimento geral.")
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit(f"Empresa detectada: {company_name}")
+                alias_hint = None
+                if company_name.lower() not in question.lower():
+                    alias_hint = (
+                        f"The user is asking about '{company_name}'. "
+                        f"Treat any alternative names as referring to the same company."
+                    )
+
+                ticker = resolve_ticker(company_name)
+                if ticker is None:
+                    await emit(
+                        f"Ticker de {company_name} não encontrado na lista de empresas suportadas. "
+                        "Respondendo com conhecimento geral."
+                    )
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit(f"Buscando dados de {company_name} ({ticker}) no Yahoo Finance...")
+                try:
+                    data = await asyncio.to_thread(fetch_market_data, ticker)
+                except Exception as e:
+                    await emit(f"Erro ao buscar dados de mercado: {e}. Respondendo com conhecimento geral.")
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit("Gerando resposta...")
+                market_text = format_market_context(data, company_name, ticker)
+                user_message = build_market_prompt(question, market_text, alias_hint=alias_hint)
+                answer = await chat_completion(RAG_SYSTEM_PROMPT, user_message, temperature=0.2)
+                await queue.put({"type": "answer", "answer": answer, "grounded": True, "chunks": []})
                 return
 
             # ---- 2. Extract company and year from question ----

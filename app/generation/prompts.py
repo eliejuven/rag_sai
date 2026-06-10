@@ -1,5 +1,9 @@
 from app.generation.skills import build_system_prompt as _build_system_prompt
 
+MARKET_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about stock market data.
+Answer ONLY based on the market data provided. Do not make up figures.
+If a specific value is missing from the data, say so clearly. Be concise and direct."""
+
 RAG_SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided document excerpts.
 
 Rules:

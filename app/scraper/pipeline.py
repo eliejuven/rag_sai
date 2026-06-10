@@ -1,12 +1,13 @@
 """
 Scraping Pipeline
 
-Orchestrates the full flow for auto-fetching a company's financial statements:
+Orchestrates the full flow for auto-fetching a company's financial data:
   1. Resolve company name → CVM registry (CNPJ)
-  2. Check staleness (skip if data is fresh)
-  3. Fetch DFP + ITR statements from CVM
+  2. Check staleness (skip if data is fresh and FRE year is indexed)
+  3a. Fetch DFP + ITR structured statements from CVM (numbers)
+  3b. Fetch Formulário de Referência sections from CVM (qualitative)
   4. Chunk → embed → store in the existing vector store + BM25 index
-  5. Persist metadata (last scraped timestamp, chunk indices)
+  5. Persist metadata (last scraped timestamp, indexed years)
 
 Progress is reported via an async callback so the SSE endpoint can stream
 live updates to the user.
@@ -20,6 +21,7 @@ from typing import Awaitable, Callable
 
 from app.scraper.cvm_registry import lookup_company
 from app.scraper.cvm_client import fetch_statements
+from app.scraper.fre_client import fetch_fre_sections
 from app.ingestion.chunker import chunk_pages
 from app.embeddings.client import embed_texts
 from app.search.vector_store import vector_store
@@ -57,19 +59,37 @@ def _save_metadata(metadata: dict) -> None:
     )
 
 
-def _is_stale(metadata: dict, cnpj: str, requested_year: int | None = None) -> bool:
-    """Return True if the company has never been scraped, data is old, or a
-    requested year is missing from the already-indexed data."""
+def _is_stale(
+    metadata: dict,
+    cnpj: str,
+    requested_year: int | None = None,
+    fre_year: int | None = None,
+) -> bool:
+    """
+    Return True if the company needs to be re-scraped.
+
+    Triggers a re-scrape when:
+    - Company has never been scraped
+    - A specific DFP year the user asked about is not yet indexed
+    - The FRE for the target year is not yet indexed
+    - Last scrape was more than STALENESS_DAYS (90) days ago
+    """
     if cnpj not in metadata:
         return True
     last_scraped_str = metadata[cnpj].get("last_scraped")
     if not last_scraped_str:
         return True
 
-    # If the user asked about a specific year not yet indexed, force re-scrape
+    # Re-scrape if a specific DFP year the user asked about is missing
     if requested_year:
         indexed_years = metadata[cnpj].get("dfp_years", [])
         if requested_year not in indexed_years:
+            return True
+
+    # Re-scrape if the FRE for the target year has not been indexed yet
+    if fre_year:
+        indexed_fre_years = metadata[cnpj].get("fre_years", [])
+        if fre_year not in indexed_fre_years:
             return True
 
     last_scraped = datetime.fromisoformat(last_scraped_str)
@@ -128,7 +148,12 @@ async def scrape_and_ingest(
     metadata = _load_metadata()
     cnpj = company["cnpj"]
 
-    if not _is_stale(metadata, cnpj, requested_year=requested_year):
+    # FRE year: the most recent complete annual filing
+    # (current_year - 1, since the current year's FRE may not be filed yet)
+    from datetime import date as _date
+    fre_year = _date.today().year - 1
+
+    if not _is_stale(metadata, cnpj, requested_year=requested_year, fre_year=fre_year):
         last = metadata[cnpj]["last_scraped"][:10]
         await emit(
             f"Dados de {display_name} já estão indexados e atualizados "
@@ -149,7 +174,6 @@ async def scrape_and_ingest(
     await emit("  → DFP (balanços anuais)...")
 
     # Build year lists — always include requested_year if provided and not in default range
-    from datetime import date as _date
     current_year = _date.today().year
     dfp_years = [current_year - 1, current_year - 2]
     itr_years = [current_year, current_year - 1]
@@ -178,10 +202,37 @@ async def scrape_and_ingest(
     await emit(f"  → {len(pages)} demonstrações baixadas.")
 
     # ------------------------------------------------------------------
+    # Step 3b — Fetch FRE qualitative sections
+    # This runs alongside DFP/ITR. Failure is non-fatal: if the FRE
+    # cannot be downloaded (network error, company hasn't filed yet),
+    # we log a warning and continue with just the structured data.
+    # ------------------------------------------------------------------
+    await emit(f"  → Formulário de Referência {fre_year} (seções qualitativas)...")
+
+    fre_pages = []
+    try:
+        fre_pages = fetch_fre_sections(
+            cnpj=cnpj,
+            company_name=display_name,
+            year=fre_year,
+        )
+        if fre_pages:
+            await emit(f"  → {len(fre_pages)} seções do FRE extraídas.")
+        else:
+            await emit(f"  → FRE {fre_year} não disponível para {display_name}.")
+    except Exception as e:
+        logger.warning("FRE scraping failed for %s (non-fatal): %s", display_name, e)
+        await emit(f"  → FRE indisponível ({e}). Continuando com dados estruturados.")
+
+    # ------------------------------------------------------------------
     # Step 4 — Chunk
+    # DFP/ITR pages are chunked together (they form a continuous financial
+    # dataset). FRE pages are chunked section by section so each chunk
+    # keeps its section metadata (section number, label) for citations.
     # ------------------------------------------------------------------
     await emit("Dividindo em chunks para indexação...")
 
+    # DFP/ITR chunks — merged chunking (existing behaviour)
     doc_chunks = chunk_pages(pages)
     for chunk in doc_chunks:
         chunk["document_id"] = f"cvm_{cnpj}"
@@ -189,28 +240,52 @@ async def scrape_and_ingest(
         chunk["source"] = "CVM"
         chunk["cnpj"] = cnpj
 
+    # FRE chunks — one section at a time to preserve section metadata
+    fre_chunks = []
+    for fre_page in fre_pages:
+        section_chunks = chunk_pages([fre_page])
+        for chunk in section_chunks:
+            chunk["document_id"] = f"fre_{cnpj}_{fre_year}"
+            chunk["filename"] = f"{display_name} (FRE {fre_year})"
+            chunk["source"] = "CVM/FRE"
+            chunk["cnpj"] = cnpj
+            # Preserve section number and label from fre_client output
+            chunk["section"] = fre_page.get("section", "")
+            chunk["section_label"] = fre_page.get("section_label", "")
+        fre_chunks.extend(section_chunks)
+
+    all_chunks = doc_chunks + fre_chunks
+
     # ------------------------------------------------------------------
     # Step 5 — Embed + store
     # ------------------------------------------------------------------
-    await emit(f"Indexando {len(doc_chunks)} chunks no vector store...")
+    await emit(f"Indexando {len(all_chunks)} chunks no vector store "
+               f"({len(doc_chunks)} DFP/ITR + {len(fre_chunks)} FRE)...")
 
     start_index = len(storage.chunks)
-    storage.chunks.extend(doc_chunks)
+    storage.chunks.extend(all_chunks)
 
-    chunk_texts = [c["text"] for c in doc_chunks]
-    chunk_indices = list(range(start_index, start_index + len(doc_chunks)))
+    chunk_texts = [c["text"] for c in all_chunks]
+    chunk_indices = list(range(start_index, start_index + len(all_chunks)))
 
     vectors = await embed_texts(chunk_texts)
     vector_store.add(vectors, chunk_indices)
     bm25_index.add(chunk_texts, chunk_indices)
 
-    # Also register the document
+    # Register both documents separately so citations show the right source
     storage.documents[f"cvm_{cnpj}"] = {
         "filename": f"{display_name} (CVM)",
         "pages": pages,
         "source": "CVM",
         "cnpj": cnpj,
     }
+    if fre_pages:
+        storage.documents[f"fre_{cnpj}_{fre_year}"] = {
+            "filename": f"{display_name} (FRE {fre_year})",
+            "pages": fre_pages,
+            "source": "CVM/FRE",
+            "cnpj": cnpj,
+        }
 
     # ------------------------------------------------------------------
     # Step 6 — Persist metadata
@@ -220,24 +295,26 @@ async def scrape_and_ingest(
         "cnpj": cnpj,
         "cd_cvm": company.get("cd_cvm", ""),
         "last_scraped": datetime.now().isoformat(),
-        "pages_fetched": len(pages),
-        "chunks_added": len(doc_chunks),
+        "pages_fetched": len(pages) + len(fre_pages),
+        "chunks_added": len(all_chunks),
         "chunk_indices": chunk_indices,
         "dfp_years": dfp_years,
         "itr_years": itr_years,
+        "fre_years": [fre_year] if fre_pages else [],
     }
     _save_metadata(metadata)
     save_state()
 
     await emit(
-        f"Concluído! {display_name}: {len(pages)} demonstrações, "
-        f"{len(doc_chunks)} chunks indexados."
+        f"Concluído! {display_name}: "
+        f"{len(pages)} demonstrações financeiras + {len(fre_pages)} seções FRE → "
+        f"{len(all_chunks)} chunks indexados."
     )
 
     return {
         "company": company,
         "scraped": True,
-        "pages_fetched": len(pages),
-        "chunks_added": len(doc_chunks),
+        "pages_fetched": len(pages) + len(fre_pages),
+        "chunks_added": len(all_chunks),
         "error": None,
     }

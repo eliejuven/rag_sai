@@ -21,3 +21,21 @@ build/
 
 # Uploaded files
 uploads/
+
+# CVM cached data (ZIPs, CSVs, persisted vectors — large binary files)
+# Use /* instead of / so git allows file-level negations inside
+data/dfp/*
+data/itr/*
+data/fre/*
+!data/fre/docs/
+data/fre/docs/*
+data/persist/*
+data/*.csv
+data/*.json
+# Keep .gitkeep files to maintain directory structure on fresh clone
+!data/.gitkeep
+!data/dfp/.gitkeep
+!data/itr/.gitkeep
+!data/fre/.gitkeep
+!data/fre/docs/.gitkeep
+!data/persist/.gitkeep

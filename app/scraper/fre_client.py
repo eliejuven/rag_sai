@@ -88,18 +88,25 @@ CREDIT_SECTIONS: dict[str, str] = {
 }
 
 # Pre-compute a regex from the section numbers.
-# It matches the section prefix at the START of the NomeArquivoPdf value.
-# e.g. "2.1_1T25_Certificação.docx" → matches "2.1"
-# The dots in section numbers are escaped (\.) so "1.2" doesn't match "1X2".
+# Sorted longest-first so "2.10" is tried before "2.1" (avoids partial match).
+# Dots are escaped so "1.2" does not accidentally match "1X2".
 _section_pattern = "|".join(
     re.escape(s) for s in sorted(CREDIT_SECTIONS.keys(), key=len, reverse=True)
 )
-# Full regex: captures (section_number, base64_content) pairs from the XML.
-# We scan the raw XML bytes to avoid any XML parser encoding issues.
+
+# Full regex: two capture groups per match:
+#   group(1) = section number exactly,  e.g. b"2.1"
+#   group(2) = base64-encoded PDF content
+#
+# Companies use different filename styles:
+#   Petrobras: "2.1_1T25_Certificacao.docx"
+#   Vale:      "2.1.pdf"
+# Capturing the section number as its own group means we never need to
+# parse the filename string — the regex gives us the number directly.
 _SECTION_REGEX = re.compile(
-    rb"<NomeArquivoPdf>((?:"
-    + _section_pattern.encode()
-    + rb")[^<]*)</NomeArquivoPdf>\s*"
+    rb"<NomeArquivoPdf>("
+    + rb"(?:" + _section_pattern.encode() + rb")"
+    + rb")[^<]*</NomeArquivoPdf>\s*"
     rb"<ImagemObjetoArquivoPdf>(.*?)</ImagemObjetoArquivoPdf>",
     re.DOTALL,
 )
@@ -251,15 +258,13 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> list[tuple[str, bytes]]:
     results = []
 
     for match in _SECTION_REGEX.finditer(xml_bytes):
-        # match.group(1) = filename bytes, e.g. b"2.1_1T25_Certificacao.docx"
-        # match.group(2) = base64 content bytes
-        filename_bytes = match.group(1)
+        # group(1) = section number bytes, e.g. b"2.1"  (captured directly by regex)
+        # group(2) = base64 content bytes
+        # This works for all filename styles:
+        #   Petrobras → "2.1_1T25_Certificacao.docx"
+        #   Vale      → "2.1.pdf"
+        section_num = match.group(1).decode("utf-8", errors="replace").strip()
         b64_content = match.group(2)
-
-        # Extract just the section number from the filename
-        # "2.1_1T25_Certificacao.docx" → "2.1"
-        filename_str = filename_bytes.decode("utf-8", errors="replace")
-        section_num = filename_str.split("_")[0].strip()
 
         if section_num not in CREDIT_SECTIONS:
             continue
@@ -381,7 +386,15 @@ def fetch_fre_sections(
         logger.warning("No credit-relevant sections found in FRE for %s", company_name)
         return []
 
-    # Step 5 — Extract text from each .docx and build pages
+    # Deduplicate: some companies file two PDFs for the same section.
+    # Keep the largest one (most content).
+    seen: dict[str, tuple[str, bytes]] = {}
+    for section_num, pdf_bytes in sections:
+        if section_num not in seen or len(pdf_bytes) > len(seen[section_num][1]):
+            seen[section_num] = (section_num, pdf_bytes)
+    sections = list(seen.values())
+
+    # Step 5 — Extract text from each PDF and build pages
     pages = []
     page_num = 1
 

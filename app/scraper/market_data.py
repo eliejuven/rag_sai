@@ -127,7 +127,7 @@ def fetch_market_data(ticker: str) -> dict:
     info = t.info
 
     snapshot = {
-        "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+        "price": info.get("currentPrice") if info.get("currentPrice") is not None else info.get("regularMarketPrice"),
         "market_cap": info.get("marketCap"),
         "pe_ratio": info.get("trailingPE"),
         "week_52_high": info.get("fiftyTwoWeekHigh"),
@@ -167,9 +167,11 @@ def format_market_context(data: dict, company_name: str, ticker: str) -> str:
     if not history.empty:
         lines.append("")
         lines.append("Histórico de Preços (semanal, últimos 2 anos):")
-        lines.append("Data          Fechamento")
+        lines.append("Data           Fechamento")
         for _, row in history.iterrows():
             date_str = str(row["Date"])[:10]
             lines.append(f"{date_str}   R$ {row['Close']:,.2f}")
+    elif all(snap.get(k) is None for k in ("price", "market_cap", "pe_ratio", "week_52_high", "week_52_low")):
+        lines.append("Dados de mercado indisponíveis para este ticker.")
 
     return "\n".join(lines)

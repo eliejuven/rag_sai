@@ -31,9 +31,11 @@ Rules:
     "Petrobras" → "Petrobras"
 - For any company you do NOT recognise as a famous alias, return its name
   exactly as written in the question (e.g. "Axia Energia", "Copasa", "Transmissora Aliança").
+- Even if the company sounds fictitious or unknown, still extract and return its name as written.
+  (e.g. "Empresa Fictícia XYZ" → return "Empresa Fictícia XYZ")
 - If the question mentions a ticker (e.g. PETR4, ABEV3), return the company
   name instead (e.g. "Petrobras", "Ambev").
-- If the question is general (no company mentioned), return null.
+- Only return null if the question contains NO company name at all (e.g. "Olá, tudo bem?").
 - If multiple companies are mentioned, return the most prominent one.
 
 Reply with ONLY valid JSON in this exact format:

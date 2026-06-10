@@ -87,29 +87,27 @@ CREDIT_SECTIONS: dict[str, str] = {
     "5.1":  "Gerenciamento de riscos e riscos de mercado",
 }
 
-# Pre-compute a regex from the section numbers.
-# Sorted longest-first so "2.10" is tried before "2.1" (avoids partial match).
-# Dots are escaped so "1.2" does not accidentally match "1X2".
-_section_pattern = "|".join(
-    re.escape(s) for s in sorted(CREDIT_SECTIONS.keys(), key=len, reverse=True)
-)
-
-# Full regex: two capture groups per match:
-#   group(1) = section number exactly,  e.g. b"2.1"
-#   group(2) = base64-encoded PDF content
-#
-# Companies use different filename styles:
-#   Petrobras: "2.1_1T25_Certificacao.docx"
-#   Vale:      "2.1.pdf"
-# Capturing the section number as its own group means we never need to
-# parse the filename string — the regex gives us the number directly.
-_SECTION_REGEX = re.compile(
-    rb"<NomeArquivoPdf>("
-    + rb"(?:" + _section_pattern.encode() + rb")"
-    + rb")[^<]*</NomeArquivoPdf>\s*"
-    rb"<ImagemObjetoArquivoPdf>(.*?)</ImagemObjetoArquivoPdf>",
-    re.DOTALL,
-)
+# CVM mandates the FRE XML schema for all listed companies.
+# These tag names are part of the official schema — they identify each section
+# with 100% reliability regardless of how the company named their files.
+# (Filenames are free-text typed by each IR team and full of inconsistencies:
+#  "1. 2 - JBS..." (space), "2. 2,1-" (comma+space), "5,5,1" (commas), etc.)
+XML_TAG_TO_SECTION: dict[str, str] = {
+    "AtividadesEmissorControladas":     "1.2",
+    "InfoSegmentosOperacionais":        "1.3",
+    "EfeitosRegulacaoEstatal":          "1.6",
+    "ContratosRelevantes":              "1.15",
+    "CondicoesFinanceirasPatrimoniais": "2.1",
+    "ResultadosOperFinanceiros":        "2.2",
+    "MedicoesNaoContabeis":             "2.5",
+    "ItensRelevantesNaoEvidenciadosDF": "2.8",
+    "PlanoNegocios":                    "2.10",
+    "DescricaoFatoresRisco":            "4.1",
+    "Descricao5PrincipaisFatoresRisco": "4.2",
+    "DescricaoRiscosMercado":           "4.3",
+    "ContingenciasRelevantes":          "4.7",
+    "DescricaoGerenciamentoRiscos":     "5.1",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -242,43 +240,49 @@ def _download_fre_doc(link_url: str, cnpj: str, year: int, version: int) -> Path
 
 def _extract_sections_from_xml(xml_bytes: bytes) -> list[tuple[str, bytes]]:
     """
-    Scan the raw XML bytes for credit-relevant sections.
+    Extract credit-relevant sections by matching CVM-standardized XML tags.
 
-    Each section is stored in the XML as:
-        <NomeArquivoPdf>2.1_SomeFilename.docx</NomeArquivoPdf>
-        <ImagemObjetoArquivoPdf>BASE64_ENCODED_DOCX</ImagemObjetoArquivoPdf>
+    The CVM mandates the FRE XML schema — every company uses the same tag
+    names regardless of how they name their embedded files. We search directly
+    for the semantic tag (e.g. <DescricaoFatoresRisco>) and extract the
+    base64 content inside it, bypassing the filename entirely.
 
-    We use regex instead of an XML parser because the XML contains
-    encoding edge cases (special characters in filenames) that cause
-    the standard library parser to fail.
+    This handles all observed IR-team filename inconsistencies:
+      Petrobras:  "2.1_1T25_Certificacao.docx"
+      Telefônica: "4.01.pdf"           (zero-padded)
+      Vale:       "FRE 2025 item 1.3.pdf" (text prefix)
+      JBS:        "1. 2 - JBS..."      (space after dot)
+      JBS:        "5,5,1 - JBS..."     (commas instead of dots)
 
-    Returns a list of (section_number, docx_bytes) tuples.
-    Only sections in CREDIT_SECTIONS are returned — everything else is skipped.
+    Returns a list of (section_number, pdf_bytes) tuples.
     """
     results = []
 
-    for match in _SECTION_REGEX.finditer(xml_bytes):
-        # group(1) = section number bytes, e.g. b"2.1"  (captured directly by regex)
-        # group(2) = base64 content bytes
-        # This works for all filename styles:
-        #   Petrobras → "2.1_1T25_Certificacao.docx"
-        #   Vale      → "2.1.pdf"
-        section_num = match.group(1).decode("utf-8", errors="replace").strip()
-        b64_content = match.group(2)
-
-        if section_num not in CREDIT_SECTIONS:
+    for xml_tag, section_num in XML_TAG_TO_SECTION.items():
+        # Match the opening tag, then find the NomeArquivoPdf (for logging)
+        # and ImagemObjetoArquivoPdf (the actual content) inside it.
+        pattern = (
+            rb"<" + xml_tag.encode() + rb">"
+            rb".*?<NomeArquivoPdf>(.*?)</NomeArquivoPdf>"
+            rb".*?<ImagemObjetoArquivoPdf>(.*?)</ImagemObjetoArquivoPdf>"
+        )
+        m = re.search(pattern, xml_bytes, re.DOTALL)
+        if not m:
+            logger.debug("Section %s (<%s>) not found in XML", section_num, xml_tag)
             continue
 
-        # Decode base64 → raw PDF bytes (CVM converts .docx to PDF before embedding)
-        # strip() removes whitespace/newlines that may appear inside the base64 block
+        filename = m.group(1).decode("utf-8", errors="replace").strip()
+        b64_content = m.group(2)
+
         try:
             pdf_bytes = base64.b64decode(b64_content.strip())
         except Exception as e:
-            logger.warning("Failed to decode base64 for section %s: %s", section_num, e)
+            logger.warning("Failed to decode section %s (%s): %s", section_num, filename, e)
             continue
 
         results.append((section_num, pdf_bytes))
-        logger.info("  Extracted section %s (%s)", section_num, CREDIT_SECTIONS[section_num])
+        logger.info("  Extracted section %s (%s) via <%s>",
+                    section_num, CREDIT_SECTIONS[section_num], xml_tag)
 
     return results
 
@@ -385,14 +389,6 @@ def fetch_fre_sections(
     if not sections:
         logger.warning("No credit-relevant sections found in FRE for %s", company_name)
         return []
-
-    # Deduplicate: some companies file two PDFs for the same section.
-    # Keep the largest one (most content).
-    seen: dict[str, tuple[str, bytes]] = {}
-    for section_num, pdf_bytes in sections:
-        if section_num not in seen or len(pdf_bytes) > len(seen[section_num][1]):
-            seen[section_num] = (section_num, pdf_bytes)
-    sections = list(seen.values())
 
     # Step 5 — Extract text from each PDF and build pages
     pages = []

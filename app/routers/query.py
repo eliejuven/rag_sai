@@ -123,6 +123,30 @@ async def query_knowledge_base(request: QueryRequest):
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)
 
+    if intent == "market":
+        company_name = await extract_company(question)
+        if company_name:
+            ticker = resolve_ticker(company_name)
+            if ticker:
+                try:
+                    data = await asyncio.to_thread(fetch_market_data, ticker)
+                    snap = data["snapshot"]
+                    has_data = any(snap.get(k) is not None for k in ("price", "market_cap", "pe_ratio"))
+                    alias_hint = None
+                    if company_name.lower() not in question.lower():
+                        alias_hint = (
+                            f"The user is asking about '{company_name}'. "
+                            f"Treat any alternative names as referring to the same company."
+                        )
+                    market_text = format_market_context(data, company_name, ticker)
+                    user_message = build_market_prompt(question, market_text, alias_hint=alias_hint)
+                    answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
+                    return QueryResponse(answer=answer, grounded=has_data, chunks=[])
+                except Exception:
+                    pass
+        answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+        return _general_response(answer)
+
     if vector_store.size == 0:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)

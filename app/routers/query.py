@@ -13,7 +13,7 @@ from app.query.transform import transform_query
 from app.query.company_extractor import extract_company, extract_year
 from app.generation.llm import chat_completion
 from app.generation.prompts import build_system_prompt, build_rag_prompt, build_market_prompt, RAG_SYSTEM_PROMPT, MARKET_SYSTEM_PROMPT
-from app.scraper.market_data import resolve_ticker, fetch_market_data, format_market_context
+from app.scraper.market_data import resolve_ticker, fetch_market_data, format_market_sections
 from app.scraper.pipeline import scrape_and_ingest
 from app.models import QueryRequest, QueryResponse, ChunkResult
 from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
@@ -22,6 +22,25 @@ from app import storage
 GENERAL_SYSTEM_PROMPT = "You are a friendly assistant. Answer the user naturally and concisely."
 
 router = APIRouter()
+
+_HISTORY_DISPLAY_LIMIT = 1500  # chars shown in ref panel for the price history section
+
+
+def _build_market_chunks(sections: list[dict], has_data: bool) -> list[ChunkResult]:
+    """Convert market data sections into ChunkResult objects for frontend citation."""
+    score = 1.0 if has_data else 0.0
+    chunks = []
+    for sec in sections:
+        text = sec["text"]
+        if len(text) > _HISTORY_DISPLAY_LIMIT:
+            text = text[:_HISTORY_DISPLAY_LIMIT] + "\n...(truncado)"
+        chunks.append(ChunkResult(
+            text=text,
+            filename=f"Yahoo Finance — {sec['section']}",
+            page_number=0,
+            score=score,
+        ))
+    return chunks
 
 
 def _general_response(answer: str) -> QueryResponse:
@@ -138,10 +157,11 @@ async def query_knowledge_base(request: QueryRequest):
                             f"The user is asking about '{company_name}'. "
                             f"Treat any alternative names as referring to the same company."
                         )
-                    market_text = format_market_context(data, company_name, ticker)
-                    user_message = build_market_prompt(question, market_text, alias_hint=alias_hint)
+                    sections = format_market_sections(data, company_name, ticker)
+                    user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
                     answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
-                    return QueryResponse(answer=answer, grounded=has_data, chunks=[])
+                    market_chunks = _build_market_chunks(sections, has_data)
+                    return QueryResponse(answer=answer, grounded=has_data, chunks=market_chunks)
                 except Exception:
                     pass
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
@@ -240,12 +260,18 @@ async def query_stream(request: QueryRequest):
                     return
 
                 await emit("Gerando resposta...")
-                market_text = format_market_context(data, company_name, ticker)
+                sections = format_market_sections(data, company_name, ticker)
                 snap = data["snapshot"]
                 has_data = any(snap.get(k) is not None for k in ("price", "market_cap", "pe_ratio"))
-                user_message = build_market_prompt(question, market_text, alias_hint=alias_hint)
+                user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
                 answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
-                await queue.put({"type": "answer", "answer": answer, "grounded": has_data, "chunks": []})
+                market_chunks = _build_market_chunks(sections, has_data)
+                await queue.put({
+                    "type": "answer",
+                    "answer": answer,
+                    "grounded": has_data,
+                    "chunks": [c.model_dump() for c in market_chunks],
+                })
                 return
 
             # ---- 2. Extract company and year from question ----

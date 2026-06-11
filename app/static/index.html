@@ -221,6 +221,12 @@
             border: 1px solid #2d4a5a;
         }
 
+        .grounded-badge.market {
+            background: #2a1f0a;
+            color: #fbbf24;
+            border: 1px solid #5a4010;
+        }
+
         .ref-panel {
             position: fixed;
             bottom: 80px;
@@ -602,8 +608,11 @@
 
             if (grounded) {
                 const isCvm = (chunks || []).some(c => c.filename && c.filename.includes("(CVM)"));
+                const isMarket = (chunks || []).some(c => c.filename && c.filename.startsWith("Yahoo Finance"));
                 if (isCvm) {
                     html += `<span class="grounded-badge cvm">Grounded in CVM data</span>`;
+                } else if (isMarket) {
+                    html += `<span class="grounded-badge market">Yahoo Finance</span>`;
                 } else {
                     html += `<span class="grounded-badge yes">Grounded in documents</span>`;
                 }
@@ -616,9 +625,10 @@
             if (chunks && chunks.length > 0) {
                 html += `<div class="sources">`;
                 chunks.forEach((c, i) => {
+                    const pageLabel = c.page_number > 0 ? ` — p.${c.page_number}` : '';
                     html += `<span class="source-chip" onclick="showRef(${i})">
                         <span class="chip-num">[${i + 1}]</span>
-                        ${escapeHtml(c.filename)} — p.${c.page_number}
+                        ${escapeHtml(c.filename)}${pageLabel}
                     </span>`;
                 });
                 html += `</div>`;
@@ -677,7 +687,8 @@
             const chunk = lastChunks[index];
             if (!chunk) return;
 
-            refHeader.textContent = `[${index + 1}] ${chunk.filename} — page ${chunk.page_number}`;
+            const pageLabel = chunk.page_number > 0 ? ` — page ${chunk.page_number}` : '';
+            refHeader.textContent = `[${index + 1}] ${chunk.filename}${pageLabel}`;
             refBody.innerHTML = `
                 <div class="ref-content">${escapeHtml(chunk.text)}</div>
                 <div class="ref-meta">Relevance score: ${chunk.score} &nbsp;·&nbsp; ${chunk.filename}</div>

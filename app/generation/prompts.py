@@ -2,7 +2,8 @@ from app.generation.skills import build_system_prompt as _build_system_prompt
 
 MARKET_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about stock market data.
 Answer ONLY based on the market data provided. Do not make up figures.
-If a specific value is missing from the data, say so clearly. Be concise and direct."""
+If a specific value is missing from the data, say so clearly. Be concise and direct.
+Always cite the section you are drawing from using [1], [2], or [3] when referencing specific figures."""
 
 RAG_SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided document excerpts.
 
@@ -39,12 +40,16 @@ def build_rag_prompt(question: str, chunks: list[dict], alias_hint: str | None =
 Question: {question}"""
 
 
-def build_market_prompt(question: str, market_text: str, alias_hint: str | None = None) -> str:
-    """Build the user message for a market data query."""
+def build_market_prompt(question: str, sections: list[dict], alias_hint: str | None = None) -> str:
+    """Build the user message for a market data query, with numbered sections for citation."""
     alias_block = f"Important: {alias_hint}\n\n" if alias_hint else ""
+    context = "\n\n".join(
+        f"[{i + 1}] {sec['section']}:\n{sec['text']}"
+        for i, sec in enumerate(sections)
+    )
     return f"""{alias_block}Market data from Yahoo Finance:
 
-{market_text}
+{context}
 
 ---
 

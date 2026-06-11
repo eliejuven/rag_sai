@@ -34,10 +34,20 @@ def test_cache():
         # Backdate the timestamp → should be stale
         old_payload = {
             "fetched_at": (datetime.now() - timedelta(days=400)).isoformat(),
+            "version": bcb.CACHE_VERSION,
             "data": mock_data,
         }
         tmp_path.write_text(json.dumps(old_payload))
         assert bcb._is_stale(bcb._load_cache()), "400-day-old cache should be stale"
+
+        # Wrong version → should be stale even if timestamp is fresh
+        wrong_version_payload = {
+            "fetched_at": datetime.now().isoformat(),
+            "version": 0,  # old version
+            "data": mock_data,
+        }
+        tmp_path.write_text(json.dumps(wrong_version_payload))
+        assert bcb._is_stale(bcb._load_cache()), "Cache with wrong version should be stale"
 
         print("✓ test_cache")
     finally:

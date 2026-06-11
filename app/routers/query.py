@@ -211,10 +211,11 @@ async def query_knowledge_base(request: QueryRequest):
 
     if intent == "macro":
         macro_data = await get_macro_data()
+        has_data = any(bool(readings) for readings in macro_data.get("series", {}).values())
         sections = format_macro_sections(macro_data)
         user_message = build_macro_prompt(question, sections)
         answer = await chat_completion(BCB_SYSTEM_PROMPT, user_message, temperature=0.2)
-        return QueryResponse(answer=answer, grounded=True, chunks=_build_bcb_chunks(sections))
+        return QueryResponse(answer=answer, grounded=has_data, chunks=_build_bcb_chunks(sections))
 
     if vector_store.size == 0:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
@@ -336,6 +337,7 @@ async def query_stream(request: QueryRequest):
             if intent == "macro":
                 await emit("Consultando dados macroeconômicos do Banco Central...")
                 macro_data = await get_macro_data()
+                has_data = any(bool(readings) for readings in macro_data.get("series", {}).values())
                 await emit("Gerando resposta...")
                 sections = format_macro_sections(macro_data)
                 user_message = build_macro_prompt(question, sections)
@@ -343,7 +345,7 @@ async def query_stream(request: QueryRequest):
                 await queue.put({
                     "type": "answer",
                     "answer": answer,
-                    "grounded": True,
+                    "grounded": has_data,
                     "chunks": [c.model_dump() for c in _build_bcb_chunks(sections)],
                 })
                 return

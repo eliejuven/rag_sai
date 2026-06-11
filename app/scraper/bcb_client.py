@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_PATH = Path(__file__).parent.parent.parent / "data" / "bcb_cache.json"
 CACHE_TTL_DAYS = 366
+CACHE_VERSION = 1  # bump when SGS_SERIES codes or data structure changes
 
 # SGS series: key → (code, display label, unit)
 SGS_SERIES: dict[str, tuple[int, str, str]] = {
@@ -29,7 +30,7 @@ SGS_SERIES: dict[str, tuple[int, str, str]] = {
     "brl_usd":      (1,     "BRL/USD",             "R$"),
     "igpm":         (189,   "IGPM",                "%"),
     "unemployment": (24369, "Taxa de Desemprego",  "%"),
-    "gdp":          (4385,  "PIB (crescimento)",   "%"),
+    "gdp":          (7326,  "PIB (crescimento)",   "%"),
 }
 
 # Focus Report indicator names as used by BCB
@@ -59,13 +60,19 @@ def _load_cache() -> dict | None:
 
 def _save_cache(data: dict) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"fetched_at": datetime.now().isoformat(), "data": data}
+    payload = {
+        "fetched_at": datetime.now().isoformat(),
+        "version": CACHE_VERSION,
+        "data": data,
+    }
     CACHE_PATH.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
 
 def _is_stale(cache: dict) -> bool:
+    if cache.get("version") != CACHE_VERSION:
+        return True
     fetched_at_str = cache.get("fetched_at")
     if not fetched_at_str:
         return True

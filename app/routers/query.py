@@ -12,7 +12,8 @@ from app.query.intent import detect_intent
 from app.query.transform import transform_query
 from app.query.company_extractor import extract_company, extract_year
 from app.generation.llm import chat_completion
-from app.generation.prompts import build_system_prompt, build_rag_prompt
+from app.generation.prompts import build_system_prompt, build_rag_prompt, build_market_prompt, RAG_SYSTEM_PROMPT, MARKET_SYSTEM_PROMPT
+from app.scraper.market_data import resolve_ticker, fetch_market_data, format_market_sections
 from app.scraper.pipeline import scrape_and_ingest
 from app.models import QueryRequest, QueryResponse, ChunkResult
 from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
@@ -21,6 +22,25 @@ from app import storage
 GENERAL_SYSTEM_PROMPT = "You are a friendly assistant. Answer the user naturally and concisely."
 
 router = APIRouter()
+
+_HISTORY_DISPLAY_LIMIT = 1500  # chars shown in ref panel for the price history section
+
+
+def _build_market_chunks(sections: list[dict], has_data: bool) -> list[ChunkResult]:
+    """Convert market data sections into ChunkResult objects for frontend citation."""
+    score = 1.0 if has_data else 0.0
+    chunks = []
+    for sec in sections:
+        text = sec["text"]
+        if len(text) > _HISTORY_DISPLAY_LIMIT:
+            text = text[:_HISTORY_DISPLAY_LIMIT] + "\n...(truncado)"
+        chunks.append(ChunkResult(
+            text=text,
+            filename=f"Yahoo Finance — {sec['section']}",
+            page_number=0,
+            score=score,
+        ))
+    return chunks
 
 
 def _general_response(answer: str) -> QueryResponse:
@@ -122,6 +142,31 @@ async def query_knowledge_base(request: QueryRequest):
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)
 
+    if intent == "market":
+        company_name = await extract_company(question)
+        if company_name:
+            ticker = resolve_ticker(company_name)
+            if ticker:
+                try:
+                    data = await asyncio.to_thread(fetch_market_data, ticker)
+                    snap = data["snapshot"]
+                    has_data = any(snap.get(k) is not None for k in ("price", "market_cap", "pe_ratio"))
+                    alias_hint = None
+                    if company_name.lower() not in question.lower():
+                        alias_hint = (
+                            f"The user is asking about '{company_name}'. "
+                            f"Treat any alternative names as referring to the same company."
+                        )
+                    sections = format_market_sections(data, company_name, ticker)
+                    user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
+                    answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
+                    market_chunks = _build_market_chunks(sections, has_data)
+                    return QueryResponse(answer=answer, grounded=has_data, chunks=market_chunks)
+                except Exception:
+                    pass
+        answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+        return _general_response(answer)
+
     if vector_store.size == 0:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)
@@ -175,6 +220,57 @@ async def query_stream(request: QueryRequest):
                     "answer": answer,
                     "grounded": False,
                     "chunks": [],
+                })
+                return
+
+            if intent == "market":
+                await emit("Identificando empresa na pergunta...")
+                company_name = await extract_company(question)
+                if not company_name:
+                    await emit("Nenhuma empresa detectada. Respondendo com conhecimento geral.")
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit(f"Empresa detectada: {company_name}")
+                alias_hint = None
+                if company_name.lower() not in question.lower():
+                    alias_hint = (
+                        f"The user is asking about '{company_name}'. "
+                        f"Treat any alternative names as referring to the same company."
+                    )
+
+                ticker = resolve_ticker(company_name)
+                if ticker is None:
+                    await emit(
+                        f"Ticker de {company_name} não encontrado na lista de empresas suportadas. "
+                        "Respondendo com conhecimento geral."
+                    )
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit(f"Buscando dados de {company_name} ({ticker}) no Yahoo Finance...")
+                try:
+                    data = await asyncio.to_thread(fetch_market_data, ticker)
+                except Exception as e:
+                    await emit(f"Erro ao buscar dados de mercado: {e}. Respondendo com conhecimento geral.")
+                    answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
+                    await queue.put({"type": "answer", "answer": answer, "grounded": False, "chunks": []})
+                    return
+
+                await emit("Gerando resposta...")
+                sections = format_market_sections(data, company_name, ticker)
+                snap = data["snapshot"]
+                has_data = any(snap.get(k) is not None for k in ("price", "market_cap", "pe_ratio"))
+                user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
+                answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
+                market_chunks = _build_market_chunks(sections, has_data)
+                await queue.put({
+                    "type": "answer",
+                    "answer": answer,
+                    "grounded": has_data,
+                    "chunks": [c.model_dump() for c in market_chunks],
                 })
                 return
 

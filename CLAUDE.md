@@ -19,6 +19,7 @@ python3 test_registry.py
 python3 test_cvm_client.py
 python3 test_company_extractor.py
 python3 test_persistence.py
+python3 test_market_data.py
 ```
 
 The app is available at `http://localhost:8001`. Swagger UI at `/docs`.
@@ -29,13 +30,24 @@ This is a RAG pipeline for Brazilian listed-company financial data. All vector s
 
 ### Request flow
 
-Every question goes through `POST /query/stream` (SSE) in `app/routers/query.py`:
+Every question goes through `POST /query/stream` (SSE) in `app/routers/query.py`. There is also a non-streaming `POST /query` endpoint with identical logic but a single JSON response. A manual `POST /ingest` endpoint in `app/routers/ingest.py` accepts PDF uploads and adds them directly to the store.
 
-1. **Intent** (`app/query/intent.py`) — LLM classifies "search" vs "chat". Chat questions skip retrieval entirely.
+1. **Intent** (`app/query/intent.py`) — LLM classifies into three intents: `"search"`, `"market"`, or `"chat"`. Chat questions return a direct LLM answer. Market questions route to the Yahoo Finance branch (see below). Only `"search"` enters the RAG pipeline.
 2. **Company + year extraction** (`app/query/company_extractor.py`) — LLM extracts and resolves aliases (Vivo → Telefônica Brasil). Year is extracted by regex. If the resolved name differs from what the user typed, an `alias_hint` string is built and injected into the RAG prompt later so the LLM doesn't say "I found Telefônica Brasil but you asked about Vivo."
-3. **First search attempt** — Vector + BM25 hybrid search on the existing in-memory store. Results are discarded if they belong to a different company or don't cover the requested year.
-4. **Auto-scrape** (`app/scraper/pipeline.py`) — If search fails, `scrape_and_ingest()` resolves the company in the CVM registry, downloads DFP/ITR ZIP files from CVM's public portal, chunks+embeds the data, and persists everything. Each step emits a progress message via an async callback that the SSE queue forwards to the browser.
-5. **Generation** (`app/generation/`) — Reranked chunks are injected into a RAG prompt. If tabular/financial data is detected, extra number-parsing instructions are appended (`skills.py`).
+3. **Query rewriting** (`app/query/transform.py`) — Before embedding, the question is rewritten by an LLM to expand abbreviations and make implicit context explicit, improving retrieval quality.
+4. **First search attempt** — Vector + BM25 hybrid search on the existing in-memory store. Results are discarded if they belong to a different company or don't cover the requested year.
+5. **Auto-scrape** (`app/scraper/pipeline.py`) — If search fails, `scrape_and_ingest()` resolves the company in the CVM registry, downloads DFP/ITR ZIP files from CVM's public portal, chunks+embeds the data, and persists everything. Each step emits a progress message via an async callback that the SSE queue forwards to the browser.
+6. **Generation** (`app/generation/`) — Reranked chunks are injected into a RAG prompt. If tabular/financial data is detected in the chunks, `skills.py` dynamically appends a detailed `TABLE_EXTRACTION_SKILL` to the system prompt with rules for reading space-thousands separators, parenthetical negatives, and PDF rendering artifacts.
+
+### Market data branch
+
+When intent is `"market"`, the pipeline bypasses CVM and the vector store entirely:
+
+- `app/scraper/market_data.py` holds a static `TICKER_MAP` (~50 major B3 companies) mapping normalized names to tickers with the `.SA` suffix (e.g. `PETR4.SA`).
+- `resolve_ticker(company_name)` normalizes accents/case and looks up the map; returns `None` if not found.
+- `fetch_market_data(ticker)` is **synchronous** — call it via `asyncio.to_thread()` from async code. It uses `yfinance` (no API key needed) to fetch a snapshot (price, market cap, P/E, valuation ratios, profitability metrics) plus 2-year weekly price history.
+- `format_market_context()` formats the result as a Portuguese text block injected into `build_market_prompt()`.
+- If the ticker isn't in `TICKER_MAP`, the pipeline falls back to a general LLM answer.
 
 ### In-memory state
 

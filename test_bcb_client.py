@@ -83,11 +83,24 @@ def test_format_sections():
     print("✓ test_format_sections")
 
 
+async def test_fetch_series():
+    from app.scraper.bcb_client import _fetch_series
+
+    readings = await _fetch_series("selic")
+    assert isinstance(readings, list), f"Expected list, got {type(readings)}"
+    assert len(readings) == 12, f"Expected 12 readings, got {len(readings)}"
+    for r in readings:
+        assert "data" in r, f"Missing 'data' key in reading: {r}"
+        assert "valor" in r, f"Missing 'valor' key in reading: {r}"
+    print(f"✓ test_fetch_series  latest={readings[-1]}")
+
+
 async def main():
     print("=== test_bcb_client.py ===\n")
     test_cache()
     test_format_sections()
-    print("\nOffline tests passed.")
+    await test_fetch_series()
+    print("\nAll tests passed.")
 
 
 if __name__ == "__main__":

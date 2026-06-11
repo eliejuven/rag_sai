@@ -73,6 +73,90 @@ def _is_stale(cache: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Network fetchers
+# ---------------------------------------------------------------------------
+
+async def _fetch_series(key: str) -> list[dict]:
+    """Fetch last 12 monthly readings for one SGS series. Returns raw BCB JSON."""
+    code, _, _ = SGS_SERIES[key]
+    url = _SGS_URL.format(code=code)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()  # [{"data": "DD/MM/YYYY", "valor": "10.50"}, ...]
+
+
+async def _fetch_focus(indicator_key: str) -> dict | None:
+    """Fetch latest median Focus Report forecast for one indicator."""
+    bcb_name = FOCUS_INDICATORS[indicator_key]
+    params = {
+        "$filter": f"Indicador eq '{bcb_name}' and Suavizado eq 'S'",
+        "$orderby": "Data desc",
+        "$top": "1",
+        "$select": "Indicador,Data,Ano,Mediana",
+        "$format": "json",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(_FOCUS_URL, params=params)
+        r.raise_for_status()
+        items = r.json().get("value", [])
+        if not items:
+            return None
+        item = items[0]
+        return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
+
+
+async def _fetch_all() -> dict:
+    """Fetch all SGS series and Focus forecasts in parallel."""
+    import asyncio as _asyncio
+
+    series_keys = list(SGS_SERIES.keys())
+    focus_keys = list(FOCUS_INDICATORS.keys())
+
+    series_results, focus_results = await _asyncio.gather(
+        _asyncio.gather(*[_fetch_series(k) for k in series_keys], return_exceptions=True),
+        _asyncio.gather(*[_fetch_focus(k) for k in focus_keys], return_exceptions=True),
+    )
+
+    series = {}
+    for key, result in zip(series_keys, series_results):
+        if isinstance(result, Exception):
+            logger.warning("BCB series fetch failed for %s: %s", key, result)
+            series[key] = []
+        else:
+            series[key] = result
+
+    focus = {}
+    for key, result in zip(focus_keys, focus_results):
+        if isinstance(result, Exception):
+            logger.warning("BCB focus fetch failed for %s: %s", key, result)
+            focus[key] = None
+        else:
+            focus[key] = result
+
+    return {"series": series, "focus": focus}
+
+
+async def get_macro_data(force_refresh: bool = False) -> dict:
+    """Return BCB macro data. Uses disk cache (366-day TTL).
+    Falls back to stale cache if a fresh fetch fails."""
+    cache = _load_cache()
+    if not force_refresh and cache and not _is_stale(cache):
+        return cache["data"]
+
+    try:
+        fresh = await _fetch_all()
+        _save_cache(fresh)
+        return fresh
+    except Exception as e:
+        logger.error("BCB fetch failed: %s", e)
+        if cache:
+            logger.warning("Using stale BCB cache as fallback")
+            return cache["data"]
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Format functions
 # ---------------------------------------------------------------------------
 

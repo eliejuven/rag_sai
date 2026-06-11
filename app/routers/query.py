@@ -12,8 +12,12 @@ from app.query.intent import detect_intent
 from app.query.transform import transform_query
 from app.query.company_extractor import extract_company, extract_year
 from app.generation.llm import chat_completion
-from app.generation.prompts import build_system_prompt, build_rag_prompt, build_market_prompt, RAG_SYSTEM_PROMPT, MARKET_SYSTEM_PROMPT
+from app.generation.prompts import (
+    build_system_prompt, build_rag_prompt, build_market_prompt, build_macro_prompt,
+    RAG_SYSTEM_PROMPT, MARKET_SYSTEM_PROMPT, BCB_SYSTEM_PROMPT,
+)
 from app.scraper.market_data import resolve_ticker, fetch_market_data, format_market_sections
+from app.scraper.bcb_client import get_macro_data, get_macro_snapshot_line, format_macro_sections
 from app.scraper.pipeline import scrape_and_ingest
 from app.models import QueryRequest, QueryResponse, ChunkResult
 from app.config import SIMILARITY_TOP_K, SIMILARITY_THRESHOLD
@@ -41,6 +45,19 @@ def _build_market_chunks(sections: list[dict], has_data: bool) -> list[ChunkResu
             score=score,
         ))
     return chunks
+
+
+def _build_bcb_chunks(sections: list[dict]) -> list[ChunkResult]:
+    """Convert BCB macro sections into ChunkResult objects for frontend citation."""
+    return [
+        ChunkResult(
+            text=sec["text"],
+            filename=f"BCB — {sec['section']}",
+            page_number=0,
+            score=1.0,
+        )
+        for sec in sections
+    ]
 
 
 def _general_response(answer: str) -> QueryResponse:
@@ -167,6 +184,13 @@ async def query_knowledge_base(request: QueryRequest):
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)
 
+    if intent == "macro":
+        macro_data = await get_macro_data()
+        sections = format_macro_sections(macro_data)
+        user_message = build_macro_prompt(question, sections)
+        answer = await chat_completion(BCB_SYSTEM_PROMPT, user_message, temperature=0.2)
+        return QueryResponse(answer=answer, grounded=True, chunks=_build_bcb_chunks(sections))
+
     if vector_store.size == 0:
         answer = await chat_completion(GENERAL_SYSTEM_PROMPT, question, temperature=0.5)
         return _general_response(answer)
@@ -271,6 +295,21 @@ async def query_stream(request: QueryRequest):
                     "answer": answer,
                     "grounded": has_data,
                     "chunks": [c.model_dump() for c in market_chunks],
+                })
+                return
+
+            if intent == "macro":
+                await emit("Consultando dados macroeconômicos do Banco Central...")
+                macro_data = await get_macro_data()
+                await emit("Gerando resposta...")
+                sections = format_macro_sections(macro_data)
+                user_message = build_macro_prompt(question, sections)
+                answer = await chat_completion(BCB_SYSTEM_PROMPT, user_message, temperature=0.2)
+                await queue.put({
+                    "type": "answer",
+                    "answer": answer,
+                    "grounded": True,
+                    "chunks": [c.model_dump() for c in _build_bcb_chunks(sections)],
                 })
                 return
 

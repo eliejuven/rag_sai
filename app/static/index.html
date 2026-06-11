@@ -227,6 +227,12 @@
             border: 1px solid #5a4010;
         }
 
+        .grounded-badge.bcb {
+            background: #0a2a2a;
+            color: #34d399;
+            border: 1px solid #0d5a3a;
+        }
+
         .ref-panel {
             position: fixed;
             bottom: 80px;
@@ -607,12 +613,15 @@
             let html = "";
 
             if (grounded) {
-                const isCvm = (chunks || []).some(c => c.filename && c.filename.includes("(CVM)"));
+                const isCvm    = (chunks || []).some(c => c.filename && c.filename.includes("(CVM)"));
                 const isMarket = (chunks || []).some(c => c.filename && c.filename.startsWith("Yahoo Finance"));
+                const isBcb    = chunks && chunks.length > 0 && chunks.every(c => c.filename && c.filename.startsWith("BCB"));
                 if (isCvm) {
                     html += `<span class="grounded-badge cvm">Grounded in CVM data</span>`;
                 } else if (isMarket) {
                     html += `<span class="grounded-badge market">Yahoo Finance</span>`;
+                } else if (isBcb) {
+                    html += `<span class="grounded-badge bcb">Banco Central do Brasil</span>`;
                 } else {
                     html += `<span class="grounded-badge yes">Grounded in documents</span>`;
                 }

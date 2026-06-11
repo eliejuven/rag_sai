@@ -103,14 +103,11 @@ async def test_fetch_focus():
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         result = await _fetch_focus(client, "ipca")
-    # Focus API may be unavailable; we just verify the function doesn't crash
-    if result is not None:
-        assert "valor" in result, f"Missing 'valor': {result}"
-        assert "data"  in result, f"Missing 'data': {result}"
-        assert "ano"   in result, f"Missing 'ano': {result}"
-        print(f"✓ test_fetch_focus  ipca={result}")
-    else:
-        print("✓ test_fetch_focus  (Focus API returned None, that's ok)")
+    assert result is not None, "Expected Focus data for IPCA, got None"
+    assert "valor" in result, f"Missing 'valor': {result}"
+    assert "data"  in result, f"Missing 'data': {result}"
+    assert "ano"   in result, f"Missing 'ano': {result}"
+    print(f"✓ test_fetch_focus  ipca={result}")
 
 
 async def test_snapshot_line():

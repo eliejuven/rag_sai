@@ -24,12 +24,12 @@ CACHE_TTL_DAYS = 366
 
 # SGS series: key → (code, display label, unit)
 SGS_SERIES: dict[str, tuple[int, str, str]] = {
-    "selic":        (11,    "Taxa Selic",          "%"),
+    "selic":        (432,   "Taxa Selic",          "%"),
     "ipca":         (433,   "IPCA",                "%"),
     "brl_usd":      (1,     "BRL/USD",             "R$"),
     "igpm":         (189,   "IGPM",                "%"),
     "unemployment": (24369, "Taxa de Desemprego",  "%"),
-    "gdp":          (4380,  "PIB (crescimento)",   "%"),
+    "gdp":          (4385,  "PIB (crescimento)",   "%"),
 }
 
 # Focus Report indicator names as used by BCB
@@ -41,7 +41,7 @@ FOCUS_INDICATORS: dict[str, str] = {
 }
 
 _SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados/ultimos/12?formato=json"
-_FOCUS_URL = "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais()"
+_FOCUS_URL = "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais"
 
 
 # ---------------------------------------------------------------------------
@@ -87,23 +87,35 @@ async def _fetch_series(client: httpx.AsyncClient, key: str) -> list[dict]:
 
 
 async def _fetch_focus(client: httpx.AsyncClient, indicator_key: str) -> dict | None:
-    """Fetch latest median Focus Report forecast for one indicator."""
+    """Fetch latest median Focus Report forecast for one indicator.
+
+    The BCB Olinda OData endpoint rejects URL-encoded filter values produced by
+    httpx params=, so we build the query string manually using percent-encoding
+    only for spaces (%20) and leave single-quotes unescaped.
+    """
     bcb_name = FOCUS_INDICATORS[indicator_key]
-    params = {
-        "$filter": f"Indicador eq '{bcb_name}' and Suavizado eq 'S'",
-        "$orderby": "Data desc",
-        "$top": "1",
-        "$select": "Indicador,Data,Ano,Mediana",
-        "$format": "json",
-    }
+    # Encode only spaces; single-quotes must stay literal for OData string literals
+    bcb_name_enc = bcb_name.replace(" ", "%20")
+    qs = (
+        f"$top=1"
+        f"&$orderby=Data%20desc"
+        f"&$format=json"
+        f"&$filter=Indicador%20eq%20'{bcb_name_enc}'"
+        f"&$select=Indicador,Data,DataReferencia,Mediana"
+    )
+    url = f"{_FOCUS_URL}?{qs}"
     try:
-        r = await client.get(_FOCUS_URL, params=params)
+        r = await client.get(url)
         r.raise_for_status()
         items = r.json().get("value", [])
         if not items:
             return None
         item = items[0]
-        return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
+        return {
+            "valor": item["Mediana"],
+            "data": item["Data"],
+            "ano": item["DataReferencia"],
+        }
     except Exception as e:
         logger.warning("BCB Focus fetch failed for %s: %s", indicator_key, e)
         return None

@@ -9,6 +9,7 @@ Two sources:
 Async-native. Cache persisted to data/bcb_cache.json with 366-day TTL.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -76,17 +77,16 @@ def _is_stale(cache: dict) -> bool:
 # Network fetchers
 # ---------------------------------------------------------------------------
 
-async def _fetch_series(key: str) -> list[dict]:
+async def _fetch_series(client: httpx.AsyncClient, key: str) -> list[dict]:
     """Fetch last 12 monthly readings for one SGS series. Returns raw BCB JSON."""
     code, _, _ = SGS_SERIES[key]
     url = _SGS_URL.format(code=code)
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        return r.json()  # [{"data": "DD/MM/YYYY", "valor": "10.50"}, ...]
+    r = await client.get(url)
+    r.raise_for_status()
+    return r.json()  # [{"data": "DD/MM/YYYY", "valor": "10.50"}, ...]
 
 
-async def _fetch_focus(indicator_key: str) -> dict | None:
+async def _fetch_focus(client: httpx.AsyncClient, indicator_key: str) -> dict | None:
     """Fetch latest median Focus Report forecast for one indicator."""
     bcb_name = FOCUS_INDICATORS[indicator_key]
     params = {
@@ -96,27 +96,25 @@ async def _fetch_focus(indicator_key: str) -> dict | None:
         "$select": "Indicador,Data,Ano,Mediana",
         "$format": "json",
     }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.get(_FOCUS_URL, params=params)
-        r.raise_for_status()
-        items = r.json().get("value", [])
-        if not items:
-            return None
-        item = items[0]
-        return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
+    r = await client.get(_FOCUS_URL, params=params)
+    r.raise_for_status()
+    items = r.json().get("value", [])
+    if not items:
+        return None
+    item = items[0]
+    return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
 
 
 async def _fetch_all() -> dict:
     """Fetch all SGS series and Focus forecasts in parallel."""
-    import asyncio as _asyncio
-
     series_keys = list(SGS_SERIES.keys())
     focus_keys = list(FOCUS_INDICATORS.keys())
 
-    series_results, focus_results = await _asyncio.gather(
-        _asyncio.gather(*[_fetch_series(k) for k in series_keys], return_exceptions=True),
-        _asyncio.gather(*[_fetch_focus(k) for k in focus_keys], return_exceptions=True),
-    )
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        series_results, focus_results = await asyncio.gather(
+            asyncio.gather(*[_fetch_series(client, k) for k in series_keys], return_exceptions=True),
+            asyncio.gather(*[_fetch_focus(client, k) for k in focus_keys], return_exceptions=True),
+        )
 
     series = {}
     for key, result in zip(series_keys, series_results):

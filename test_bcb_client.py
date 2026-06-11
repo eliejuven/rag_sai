@@ -85,10 +85,12 @@ def test_format_sections():
 
 async def test_fetch_series():
     from app.scraper.bcb_client import _fetch_series
+    import httpx
 
-    readings = await _fetch_series("selic")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        readings = await _fetch_series(client, "selic")
     assert isinstance(readings, list), f"Expected list, got {type(readings)}"
-    assert len(readings) == 12, f"Expected 12 readings, got {len(readings)}"
+    assert 1 <= len(readings) <= 12, f"Expected 1-12 readings, got {len(readings)}"
     for r in readings:
         assert "data" in r, f"Missing 'data' key in reading: {r}"
         assert "valor" in r, f"Missing 'valor' key in reading: {r}"

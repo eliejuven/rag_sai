@@ -54,3 +54,24 @@ def build_market_prompt(question: str, sections: list[dict], alias_hint: str | N
 ---
 
 Question: {question}"""
+
+
+BCB_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about Brazilian macroeconomic indicators.
+Answer ONLY based on the BCB (Banco Central do Brasil) data provided. Do not make up figures.
+If a specific value is missing from the data, say so clearly. Be concise and direct.
+Always cite the section you are drawing from using [1], [2], [3], [4], or [5] when referencing specific figures."""
+
+
+def build_macro_prompt(question: str, sections: list[dict]) -> str:
+    """Build the user message for a macro data query, with numbered sections for citation."""
+    context = "\n\n".join(
+        f"[{i + 1}] {sec['section']}:\n{sec['text']}"
+        for i, sec in enumerate(sections)
+    )
+    return f"""BCB data (Banco Central do Brasil):
+
+{context}
+
+---
+
+Question: {question}"""

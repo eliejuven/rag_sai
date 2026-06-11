@@ -10,15 +10,23 @@ information not available in the structured DFP/ITR CSV data:
   - Section 5: Risk management policies
   - Section 1: Business description, operating segments
 
-How this works:
+How this works (for FRE filings from reference year 2023 onward — see
+MODERN_SCHEMA_MIN_YEAR):
   1. Download the FRE metadata index CSV from dados.cvm.gov.br
      → This gives us a LINK_DOC URL per company per version
   2. Download the FRE ZIP from rad.cvm.gov.br using that URL
-     → The ZIP contains a single large XML file
-  3. The XML embeds each section as a base64-encoded .docx file
-  4. We decode only the credit-relevant sections (Option B filtering)
-  5. Extract text from each .docx with python-docx
-  6. Return pages compatible with the existing chunker pipeline
+     → The ZIP contains a single large XML file (~10-50MB) with every
+       section embedded as a base64-encoded PDF
+  3. Match CVM-standardized XML tags (XML_TAG_TO_SECTION) to find each
+     credit-relevant section's <ImagemObjetoArquivoPdf> content
+  4. Extract text from each embedded PDF with pdfplumber
+  5. Return pages compatible with the existing chunker pipeline
+
+Schema versions: CVM Resolução 80 (2022) overhauled the FRE form starting
+with reference-year-2023 filings. Pre-2023 filings use a completely
+different structure (a small index XML plus a nested .fre ZIP containing
+dozens of per-topic XML files with structured fields, no embedded PDFs)
+and are NOT supported by this client — see MODERN_SCHEMA_MIN_YEAR.
 
 Sources:
   Metadata: https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS/
@@ -108,6 +116,17 @@ XML_TAG_TO_SECTION: dict[str, str] = {
     "ContingenciasRelevantes":          "4.7",
     "DescricaoGerenciamentoRiscos":     "5.1",
 }
+
+# CVM Resolução 80 (2022) overhauled the FRE form starting with reference-year
+# 2023 filings (single XML with embedded base64 PDFs, matched by XML_TAG_TO_SECTION).
+# Earlier years use a different structure entirely (nested .fre ZIP of per-topic
+# XMLs, no embedded PDFs) and are not supported — see module docstring.
+MODERN_SCHEMA_MIN_YEAR = 2023
+
+# Matches any "document container" tag that wraps an embedded file, e.g.
+# <DescricaoFatoresRisco><NomeArquivoPdf>...</NomeArquivoPdf>...
+# Used only for diagnostics when none of XML_TAG_TO_SECTION's tags match.
+_CONTAINER_TAG_RE = re.compile(rb"<(\w+)>\s*<NomeArquivoPdf>")
 
 
 # ---------------------------------------------------------------------------
@@ -272,10 +291,16 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> list[tuple[str, bytes]]:
             continue
 
         filename = m.group(1).decode("utf-8", errors="replace").strip()
-        b64_content = m.group(2)
+        b64_content = m.group(2).strip()
+
+        if not b64_content:
+            # Tag is present but the company left this section empty
+            # (nothing to disclose for it this year).
+            logger.debug("Section %s (<%s>) present but empty — skipping", section_num, xml_tag)
+            continue
 
         try:
-            pdf_bytes = base64.b64decode(b64_content.strip())
+            pdf_bytes = base64.b64decode(b64_content)
         except Exception as e:
             logger.warning("Failed to decode section %s (%s): %s", section_num, filename, e)
             continue
@@ -285,6 +310,17 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> list[tuple[str, bytes]]:
                     section_num, CREDIT_SECTIONS[section_num], xml_tag)
 
     return results
+
+
+def _find_container_tags(xml_bytes: bytes) -> list[str]:
+    """
+    Return the sorted, unique tag names that wrap a <NomeArquivoPdf> child
+    anywhere in the XML — i.e. every "document section" tag actually present.
+
+    Used only for diagnostics when _extract_sections_from_xml finds nothing,
+    to show what tags the company's FRE actually uses.
+    """
+    return sorted(set(m.decode() for m in _CONTAINER_TAG_RE.findall(xml_bytes)))
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +372,7 @@ def fetch_fre_sections(
     cnpj: str,
     company_name: str,
     year: int | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], str | None]:
     """
     Fetch credit-relevant sections from the Formulário de Referência for
     a given company.
@@ -348,18 +384,30 @@ def fetch_fre_sections(
                       (the most recent complete annual filing).
 
     Returns:
-        List of page dicts: [{"page_number": N, "text": "..."}]
-        Compatible with the existing chunker pipeline.
-        Each page is one credit-relevant section.
+        Tuple of (pages, skip_reason):
+          - pages: list of page dicts [{"page_number": N, "text": "...", ...}],
+            compatible with the existing chunker pipeline. Each page is one
+            credit-relevant section. Empty if the FRE could not be used.
+          - skip_reason: a short, user-facing (pt-BR) explanation of why no
+            sections were returned, or None if extraction succeeded.
     """
     if year is None:
         year = date.today().year - 1
 
+    if year < MODERN_SCHEMA_MIN_YEAR:
+        reason = (
+            f"FRE de {year} usa o formato da CVM anterior a {MODERN_SCHEMA_MIN_YEAR} "
+            f"(Resolução CVM 80), que não é suportado por este cliente."
+        )
+        logger.warning("%s (%s): %s", company_name, cnpj, reason)
+        return [], reason
+
     # Step 1 — Find the download URL
     result = get_latest_fre_link(cnpj, year)
     if result is None:
-        logger.warning("No FRE available for %s (%s) year %d", company_name, cnpj, year)
-        return []
+        reason = f"Nenhum FRE encontrado na CVM para o ano de referência {year}."
+        logger.warning("%s (%s): %s", company_name, cnpj, reason)
+        return [], reason
     link_url, version = result
     logger.info("Found FRE for %s: year=%d version=%d", company_name, year, version)
 
@@ -378,8 +426,9 @@ def fetch_fre_sections(
                 reverse=True,
             )
         if not xml_names:
-            logger.error("No XML found in FRE ZIP for %s", company_name)
-            return []
+            reason = f"Pacote do FRE de {year} não contém um arquivo XML reconhecível."
+            logger.error("%s: %s", company_name, reason)
+            return [], reason
 
         xml_bytes = zf.read(xml_names[0])
         logger.info("Parsing FRE XML (%s, %.1f MB)", xml_names[0], len(xml_bytes) / 1e6)
@@ -387,8 +436,31 @@ def fetch_fre_sections(
     # Step 4 — Extract credit-relevant sections from XML
     sections = _extract_sections_from_xml(xml_bytes)
     if not sections:
-        logger.warning("No credit-relevant sections found in FRE for %s", company_name)
-        return []
+        container_tags = _find_container_tags(xml_bytes)
+        logger.warning(
+            "No credit-relevant sections found in FRE for %s (year %d). "
+            "XML contains %d document-container tags total, none matched our "
+            "%d known section tags. Sample tags present: %s",
+            company_name, year, len(container_tags), len(XML_TAG_TO_SECTION),
+            container_tags[:10],
+        )
+        reason = (
+            f"O XML do FRE de {year} não contém nenhuma das seções esperadas "
+            f"(possível mudança no formato/schema da CVM)."
+        )
+        return [], reason
+
+    if len(sections) < len(XML_TAG_TO_SECTION):
+        found_nums = {s[0] for s in sections}
+        missing = [
+            f"{num} ({CREDIT_SECTIONS[num]})"
+            for num in XML_TAG_TO_SECTION.values()
+            if num not in found_nums
+        ]
+        logger.info(
+            "FRE for %s (year %d): %d/%d sections found. Missing: %s",
+            company_name, year, len(sections), len(XML_TAG_TO_SECTION), missing,
+        )
 
     # Step 5 — Extract text from each PDF and build pages
     pages = []
@@ -424,4 +496,11 @@ def fetch_fre_sections(
         "FRE extraction complete for %s: %d sections, %d pages",
         company_name, len(sections), len(pages),
     )
-    return pages
+
+    if not pages:
+        return [], (
+            f"Seções do FRE de {year} foram localizadas, mas não foi possível "
+            f"extrair texto dos PDFs."
+        )
+
+    return pages, None

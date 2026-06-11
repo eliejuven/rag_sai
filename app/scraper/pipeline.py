@@ -211,7 +211,7 @@ async def scrape_and_ingest(
 
     fre_pages = []
     try:
-        fre_pages = fetch_fre_sections(
+        fre_pages, fre_skip_reason = fetch_fre_sections(
             cnpj=cnpj,
             company_name=display_name,
             year=fre_year,
@@ -219,10 +219,10 @@ async def scrape_and_ingest(
         if fre_pages:
             await emit(f"  → {len(fre_pages)} seções do FRE extraídas.")
         else:
-            await emit(f"  → FRE {fre_year} não disponível para {display_name}.")
+            await emit(f"  → AVISO: FRE {fre_year} não disponível para {display_name}. {fre_skip_reason}")
     except Exception as e:
         logger.warning("FRE scraping failed for %s (non-fatal): %s", display_name, e)
-        await emit(f"  → FRE indisponível ({e}). Continuando com dados estruturados.")
+        await emit(f"  → AVISO: FRE indisponível para {display_name} ({e}). Continuando com dados estruturados.")
 
     # ------------------------------------------------------------------
     # Step 4 — Chunk

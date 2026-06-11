@@ -191,8 +191,18 @@ async def query_knowledge_base(request: QueryRequest):
                         )
                     sections = format_market_sections(data, company_name, ticker)
                     user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
+                    snapshot_line = await get_macro_snapshot_line()
+                    bcb_section_num = len(sections) + 1
+                    user_message += f"\n\n[{bcb_section_num}] Contexto Macroeconômico (BCB):\n{snapshot_line}"
                     answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
                     market_chunks = _build_market_chunks(sections, has_data)
+                    if f"[{bcb_section_num}]" in answer:
+                        market_chunks.append(ChunkResult(
+                            text=f"Contexto Macroeconômico (BCB):\n{snapshot_line}",
+                            filename="BCB — Macro Snapshot",
+                            page_number=0,
+                            score=1.0,
+                        ))
                     return QueryResponse(answer=answer, grounded=has_data, chunks=market_chunks)
                 except Exception:
                     pass
@@ -303,8 +313,18 @@ async def query_stream(request: QueryRequest):
                 snap = data["snapshot"]
                 has_data = any(snap.get(k) is not None for k in ("price", "market_cap", "pe_ratio"))
                 user_message = build_market_prompt(question, sections, alias_hint=alias_hint)
+                snapshot_line = await get_macro_snapshot_line()
+                bcb_section_num = len(sections) + 1
+                user_message += f"\n\n[{bcb_section_num}] Contexto Macroeconômico (BCB):\n{snapshot_line}"
                 answer = await chat_completion(MARKET_SYSTEM_PROMPT, user_message, temperature=0.2)
                 market_chunks = _build_market_chunks(sections, has_data)
+                if f"[{bcb_section_num}]" in answer:
+                    market_chunks.append(ChunkResult(
+                        text=f"Contexto Macroeconômico (BCB):\n{snapshot_line}",
+                        filename="BCB — Macro Snapshot",
+                        page_number=0,
+                        score=1.0,
+                    ))
                 await queue.put({
                     "type": "answer",
                     "answer": answer,

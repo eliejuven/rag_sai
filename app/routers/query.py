@@ -137,8 +137,23 @@ async def _search_and_answer(
         chunk_dicts.append(chunk_data)
 
     user_message = build_rag_prompt(question, chunk_dicts, alias_hint=alias_hint)
+
+    # BCB enrichment: append macro snapshot as a numbered section
+    snapshot_line = await get_macro_snapshot_line()
+    bcb_section_num = len(chunk_dicts) + 1
+    user_message += f"\n\n[{bcb_section_num}] Contexto Macroeconômico (BCB):\n{snapshot_line}"
+
     system_prompt = build_system_prompt(chunk_dicts)
     answer = await chat_completion(system_prompt, user_message, temperature=0.2)
+
+    # Include BCB chip only when the LLM actually cited the macro section
+    if f"[{bcb_section_num}]" in answer:
+        chunks.append(ChunkResult(
+            text=f"Contexto Macroeconômico (BCB):\n{snapshot_line}",
+            filename="BCB — Macro Snapshot",
+            page_number=0,
+            score=1.0,
+        ))
 
     return QueryResponse(answer=answer, grounded=True, chunks=chunks)
 

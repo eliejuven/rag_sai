@@ -96,13 +96,17 @@ async def _fetch_focus(client: httpx.AsyncClient, indicator_key: str) -> dict | 
         "$select": "Indicador,Data,Ano,Mediana",
         "$format": "json",
     }
-    r = await client.get(_FOCUS_URL, params=params)
-    r.raise_for_status()
-    items = r.json().get("value", [])
-    if not items:
+    try:
+        r = await client.get(_FOCUS_URL, params=params)
+        r.raise_for_status()
+        items = r.json().get("value", [])
+        if not items:
+            return None
+        item = items[0]
+        return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
+    except Exception as e:
+        logger.warning("BCB Focus fetch failed for %s: %s", indicator_key, e)
         return None
-    item = items[0]
-    return {"valor": item["Mediana"], "data": item["Data"], "ano": item["Ano"]}
 
 
 async def _fetch_all() -> dict:
@@ -152,6 +156,27 @@ async def get_macro_data(force_refresh: bool = False) -> dict:
             logger.warning("Using stale BCB cache as fallback")
             return cache["data"]
         raise
+
+
+async def get_macro_snapshot_line() -> str:
+    """Return a compact one-line macro snapshot for prompt enrichment.
+    Reads from the 366-day disk cache — near-zero latency on warm runs."""
+    data = await get_macro_data()
+    series = data.get("series", {})
+
+    def _latest(key: str) -> str | None:
+        readings = series.get(key, [])
+        return readings[-1]["valor"] if readings else None
+
+    parts = []
+    if (v := _latest("selic"))        is not None: parts.append(f"Selic: {v}%")
+    if (v := _latest("ipca"))         is not None: parts.append(f"IPCA: {v}%")
+    if (v := _latest("brl_usd"))      is not None: parts.append(f"BRL/USD: R$ {v}")
+    if (v := _latest("igpm"))         is not None: parts.append(f"IGPM: {v}%")
+    if (v := _latest("unemployment")) is not None: parts.append(f"Desemprego: {v}%")
+    if (v := _latest("gdp"))          is not None: parts.append(f"PIB: {v}%")
+
+    return " | ".join(parts) if parts else "Dados BCB indisponíveis."
 
 
 # ---------------------------------------------------------------------------

@@ -97,11 +97,39 @@ async def test_fetch_series():
     print(f"✓ test_fetch_series  latest={readings[-1]}")
 
 
+async def test_fetch_focus():
+    import httpx
+    from app.scraper.bcb_client import _fetch_focus
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        result = await _fetch_focus(client, "ipca")
+    # Focus API may be unavailable; we just verify the function doesn't crash
+    if result is not None:
+        assert "valor" in result, f"Missing 'valor': {result}"
+        assert "data"  in result, f"Missing 'data': {result}"
+        assert "ano"   in result, f"Missing 'ano': {result}"
+        print(f"✓ test_fetch_focus  ipca={result}")
+    else:
+        print("✓ test_fetch_focus  (Focus API returned None, that's ok)")
+
+
+async def test_snapshot_line():
+    from app.scraper.bcb_client import get_macro_snapshot_line
+
+    line = await get_macro_snapshot_line()
+    for label in ("Selic", "IPCA", "BRL/USD", "IGPM", "Desemprego", "PIB"):
+        assert label in line, f"Missing '{label}' in snapshot line: {line}"
+    assert "|" in line, "Expected pipe-separated values"
+    print(f"✓ test_snapshot_line  {line}")
+
+
 async def main():
     print("=== test_bcb_client.py ===\n")
     test_cache()
     test_format_sections()
     await test_fetch_series()
+    await test_fetch_focus()
+    await test_snapshot_line()
     print("\nAll tests passed.")
 
 

@@ -173,12 +173,15 @@ async def get_macro_data(force_refresh: bool = False) -> dict:
 async def get_macro_snapshot_line() -> str:
     """Return a compact one-line macro snapshot for prompt enrichment.
     Reads from the 366-day disk cache — near-zero latency on warm runs."""
-    data = await get_macro_data()
+    try:
+        data = await get_macro_data()
+    except Exception:
+        return "Dados BCB indisponíveis."
     series = data.get("series", {})
 
     def _latest(key: str) -> str | None:
         readings = series.get(key, [])
-        return readings[-1]["valor"] if readings else None
+        return readings[-1].get("valor") if readings else None
 
     parts = []
     if (v := _latest("selic"))        is not None: parts.append(f"Selic: {v}%")

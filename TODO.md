@@ -208,6 +208,37 @@ CNPJ**, not just the latest year — more data = richer report, per the user's
 
 ## Phase 1 — Company Dossier (Fact Extraction Layer)
 
+> **STATUS: COMPLETE (2026-06-12)**, on branch `feature/company-dossier`
+> (off `main`). All of 1.1-1.8 implemented:
+> - `app/scraper/cvm_client.py` — `_clean_statement_df()` /
+>   `_extract_line_items()` add structured `line_items` to every DFP/ITR page
+>   (additive, `text` unchanged).
+> - `app/scraper/cvm_registry.py` — `SETOR_ATIV` exposed as `"sector"`
+>   (53 distinct values observed); new `get_company_by_cnpj()` for dossier
+>   lookups by CNPJ.
+> - `app/analysis/schemas.py` — all Pydantic models from 1.2, as specified.
+> - `app/analysis/extraction.py` — LLM extraction (Mistral, JSON mode) of
+>   `QualitativeFact`s for all 18 FRE sections and `DisclosedMetric`s from 2.5.
+> - `app/analysis/dossier_builder.py` — `build_dossier(cnpj)`, persists to
+>   `data/dossiers/<cnpj_digits>.json`. Includes conflict detection (1.6,
+>   >1% relative diff) and `DossierCoverage` (1.7).
+> - `app/generation/llm.py` — added 429 retry/backoff (Mistral rate-limits
+>   hard under the ~14-18 concurrent extraction calls per company);
+>   `dossier_builder` also caps concurrency at 3 (`_MAX_CONCURRENT_EXTRACTIONS`).
+> - `test_dossier.py` — validated end-to-end on Vale and Petrobras (full
+>   DFP+ITR+FRE coverage already in storage): ~1,700 financial line items,
+>   ~150-185 qualitative facts, 3-8 disclosed metrics each, 0 conflicts,
+>   14/18 FRE sections present (the 4 new governance sections require a
+>   re-scrape to populate — these companies were scraped before that change).
+> - **1.1 migration decision**: went with option (a) — no migration script.
+>   `_build_financial_line_items()` reads `page.get("line_items", [])`, so
+>   companies scraped before this change simply yield zero line items until
+>   re-scraped (staleness-triggered). Acceptable since Phase 8 benchmark
+>   companies aren't picked yet and can be (re-)scraped fresh.
+>
+> **Next**: Phase 3 (Sector Playbooks) — doesn't need the 1-pager template
+> either. Phase 4 (section generators) is the first phase that needs it.
+
 **Goal**: one deduplicated, structured, fully-cited JSON document per company
 that every downstream stage reads from. No section generator should ever
 touch raw `storage.chunks` directly — this is what prevents the
@@ -745,11 +776,15 @@ data/
 ## Phase 8 — Benchmark Round Prep
 
 ### 8.1 Target companies
-- [ ] Pick 3–5 companies from the
-      [25 verified-working FRE list](./CONTEXT.md#reference-all-25-verified-working-fre-companies-1414-sections)
-      that also have solid DFP/ITR coverage — ideally spanning different
-      sectors so Phase 3 playbook coverage gaps become visible early (e.g.,
-      one from a sector you're meeting faculty about this week).
+- [ ] Pick 3–5 companies from the 25 verified-working FRE companies (14/14
+      sections, reference-year 2023+): Petrobras, Vale, Telefônica Brasil,
+      Ambev, Itaú Unibanco, Embraer, JBS, Suzano, Magazine Luiza, Localiza,
+      Marfrig, Hapvida, Azul, Track & Field, Allied, OceanPact, Ser
+      Educacional, Vivara, Smartfit, Intelbras, Vamos, PetroRecôncavo,
+      Direcional Engenharia, Cruzeiro do Sul Educacional, Mater Dei — that
+      also have solid DFP/ITR coverage — ideally spanning different sectors
+      so Phase 3 playbook coverage gaps become visible early (e.g., one from
+      a sector you're meeting faculty about this week).
 - [ ] Run `generate_credit_analysis()` for each, end-to-end.
 
 ### 8.2 Feedback capture (oral feedback → notes)

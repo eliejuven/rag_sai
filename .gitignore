@@ -19,6 +19,9 @@ build/
 *.swo
 .DS_Store
 
+# Runtime data
+data/bcb_cache.json
+
 # Uploaded files
 uploads/
 

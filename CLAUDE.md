@@ -20,6 +20,7 @@ python3 test_cvm_client.py
 python3 test_company_extractor.py
 python3 test_persistence.py
 python3 test_market_data.py
+python3 test_bcb_client.py
 ```
 
 The app is available at `http://localhost:8001`. Swagger UI at `/docs`.
@@ -32,7 +33,7 @@ This is a RAG pipeline for Brazilian listed-company financial data. All vector s
 
 Every question goes through `POST /query/stream` (SSE) in `app/routers/query.py`. There is also a non-streaming `POST /query` endpoint with identical logic but a single JSON response. A manual `POST /ingest` endpoint in `app/routers/ingest.py` accepts PDF uploads and adds them directly to the store.
 
-1. **Intent** (`app/query/intent.py`) — LLM classifies into three intents: `"search"`, `"market"`, or `"chat"`. Chat questions return a direct LLM answer. Market questions route to the Yahoo Finance branch (see below). Only `"search"` enters the RAG pipeline.
+1. **Intent** (`app/query/intent.py`) — LLM classifies into four intents: `"search"`, `"market"`, `"macro"`, or `"chat"`. Chat questions return a direct LLM answer. Market questions route to the Yahoo Finance branch (see below). Macro questions route to the BCB macro branch (see below). Only `"search"` enters the RAG pipeline.
 2. **Company + year extraction** (`app/query/company_extractor.py`) — LLM extracts and resolves aliases (Vivo → Telefônica Brasil). Year is extracted by regex. If the resolved name differs from what the user typed, an `alias_hint` string is built and injected into the RAG prompt later so the LLM doesn't say "I found Telefônica Brasil but you asked about Vivo."
 3. **Query rewriting** (`app/query/transform.py`) — Before embedding, the question is rewritten by an LLM to expand abbreviations and make implicit context explicit, improving retrieval quality.
 4. **First search attempt** — Vector + BM25 hybrid search on the existing in-memory store. Results are discarded if they belong to a different company or don't cover the requested year.
@@ -48,6 +49,15 @@ When intent is `"market"`, the pipeline bypasses CVM and the vector store entire
 - `fetch_market_data(ticker)` is **synchronous** — call it via `asyncio.to_thread()` from async code. It uses `yfinance` (no API key needed) to fetch a snapshot (price, market cap, P/E, valuation ratios, profitability metrics) plus 2-year weekly price history.
 - `format_market_context()` formats the result as a Portuguese text block injected into `build_market_prompt()`.
 - If the ticker isn't in `TICKER_MAP`, the pipeline falls back to a general LLM answer.
+
+### BCB macro branch
+
+When intent is `"macro"`, the pipeline fetches from the Brazilian Central Bank (BCB) API:
+
+- `app/scraper/bcb_client.py` fetches 6 SGS time-series (Selic, IPCA, BRL/USD, IGPM, unemployment, GDP) and Focus Report consensus forecasts via `httpx`. All fetches run in parallel with `asyncio.gather`.
+- Results are cached to `data/bcb_cache.json` with a **366-day TTL** (persists across restarts). `get_macro_data()` reads from cache when fresh; fetches and writes on first use or expiry; falls back to stale cache if the live fetch fails.
+- `format_macro_sections()` returns 5 named sections (`[1] Política Monetária`, `[2] Inflação`, `[3] Câmbio`, `[4] Atividade Econômica`, `[5] Focus Report`) passed to `build_macro_prompt()` for numbered citations.
+- **Enrichment**: every RAG and market response also receives a one-line BCB snapshot (`get_macro_snapshot_line()`) as a numbered section appended to the prompt. A `"BCB — Macro Snapshot"` chip is only included in the response when the LLM's answer actually cites that section number.
 
 ### In-memory state
 

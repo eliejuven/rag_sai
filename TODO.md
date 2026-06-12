@@ -25,17 +25,21 @@ extract correctly across 4 cached companies. **Known limitation**: section
 near-empty (61-536 chars across the 4 tested companies). Keep it for
 coverage/citation purposes but don't expect much qualitative content from it.
 
-**Phase 1 (Company Dossier) is COMPLETE** on branch `feature/company-dossier`
-(off `main`, 5 commits, not yet merged) — see the status box at the top of
-Phase 1 below for full details (files created/modified, validation results,
-the 1.1 migration decision).
+**Phase 1 (Company Dossier) is COMPLETE and merged to `main`** (`3117b4a`) —
+see the status box at the top of Phase 1 below for full details (files
+created/modified, validation results, the 1.1 migration decision).
 
-**Next**: decide whether to merge `feature/company-dossier` into `main` now
-(same workflow as the FRE governance branch: commit → merge → delete branch →
-push), or keep building Phase 3 (Sector Playbooks) on this branch first. Then
-start Phase 3 — it does **not** need the 1-pager template (see decision 7
-below and the note in Phase 1's status box). Phase 4 is the first phase that
-needs the template.
+**Phase 3 (Sector Playbooks) infrastructure is COMPLETE** on branch
+`feature/sector-playbooks` (off `main`, not yet merged) — see the status box
+at the top of Phase 3 below. The template, loader, and a generic
+`_default.md` playbook exist and are wired up; actual sector-specific
+playbook content (3.2) is still pending faculty meetings.
+
+**Next**: merge `feature/sector-playbooks` once this session's commits are
+in, then start Phase 4 (section generators) — this is the **first phase that
+needs the 1-pager/memo template** (see decision 7 and Phase 1/3 status
+boxes). Until the template arrives, Phase 4 work can still proceed using the
+v1 agent roster (decision 5) as a placeholder structure.
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -504,11 +508,38 @@ how each company structures its own chart of accounts.
 
 ## Phase 3 — Sector Playbooks (MIT Faculty Lens)
 
+> **STATUS: INFRASTRUCTURE COMPLETE (2026-06-12)**, on branch
+> `feature/sector-playbooks` (off `main`). 3.1, 3.3, 3.4 done:
+> - `data/playbooks/_template.md` — the 5-section template (3.1), with usage
+>   notes for filling it in during faculty meetings.
+> - `data/playbooks/_default.md` — a sector-agnostic credit-analysis
+>   framework (same 5-section structure), used as the fallback for every
+>   sector until a real playbook exists for it.
+> - `app/analysis/playbooks.py` — `load_playbook(sector) -> str` (3.3/3.4).
+>   `_slugify(sector)` maps CVM's `SETOR_ATIV` value to a filename slug and
+>   strips the "Emp. Adm. Part. - X" holding-company prefix so a holding
+>   company slugs to the same playbook as sector X.
+> - `test_playbooks.py` — validated `_slugify()` against all 70 distinct
+>   `SETOR_ATIV` values from `data/cvm_registry.csv`; confirmed
+>   holding-company variants map to their base sector's slug (with one known
+>   exception, see Open Question #3); confirmed `load_playbook()` falls back
+>   to `_default.md` for every sector (no sector-specific files exist yet).
+>
+> **Not done**: 3.2 (faculty elicitation) — no sector-specific playbook
+> *content* exists yet. This doesn't block anything: every company currently
+> gets `_default.md`. Once a faculty meeting happens, drop
+> `data/playbooks/<sector_slug>.md` in and it's picked up automatically, with
+> zero code changes.
+>
+> **Next**: Phase 4 (section generators) — first phase needing the 1-pager
+> template, but can start with the v1 agent roster (decision 5) as a
+> placeholder.
+
 This is the differentiator — treat it as **in-context retrieval of expert
 frameworks**, not fine-tuning (not realistic for this timeline).
 
 ### 3.1 Playbook template
-- [ ] Create `data/playbooks/_template.md` with a fixed structure mirroring
+- [x] Create `data/playbooks/_template.md` with a fixed structure mirroring
       the elicitation questions:
   ```markdown
   # Sector Playbook: <Sector Name>
@@ -546,22 +577,28 @@ frameworks**, not fine-tuning (not realistic for this timeline).
       need to wait for all sectors before wiring Phase 3.3/3.4.
 
 ### 3.3 Storage + loader
-- [ ] `data/playbooks/<sector_slug>.md` — one file per sector.
-- [ ] `data/playbooks/_default.md` — generic credit-analysis framework, used
+- [x] `data/playbooks/<sector_slug>.md` — one file per sector (none created
+      yet — pending 3.2; mechanism is ready).
+- [x] `data/playbooks/_default.md` — generic credit-analysis framework, used
       as fallback when no sector-specific playbook exists yet (so the
       pipeline never breaks for an uncovered sector — it just gets a more
       generic "judgment" section).
-- [ ] `app/analysis/playbooks.py`:
+- [x] `app/analysis/playbooks.py`:
   - `load_playbook(sector: str | None) -> str` — returns playbook markdown
     text (or `_default.md` if `sector` is `None` or no matching file).
-  - Sector → filename mapping: simple slugify for now (lowercase, hyphens).
+  - Sector → filename mapping: `_slugify()` (lowercase, hyphens, accents
+    stripped, "Emp. Adm. Part. -" holding prefix stripped).
 
 ### 3.4 Sector → playbook wiring
-- [ ] `CompanyDossier.sector` (from Phase 1.5) is the lookup key.
-- [ ] If CVM's sector taxonomy doesn't align well with how playbooks are
-      organized (e.g., CVM might say "Comércio (Atacado e Varejo)" but the
-      playbook is "Retail"), a small manual alias map may be needed —
-      flagged in Open Questions.
+- [x] `CompanyDossier.sector` (from Phase 1.5) is the lookup key.
+- [x] CVM's sector taxonomy (70 distinct `SETOR_ATIV` values) is fine-grained
+      enough to use directly — no "Retail"-style remapping needed for the 38
+      substantive sectors. The ~30 "Emp. Adm. Part. - X" holding-company
+      variants are handled by `_slugify()` stripping that prefix. One known
+      mismatch (CVM spells the construction-sector holding variant
+      differently from the base sector — see Open Question #3) falls back to
+      `_default.md` rather than sharing a future construction playbook;
+      low-impact, revisit if a Phase 8 benchmark company is affected.
 
 ---
 
@@ -858,14 +895,16 @@ data/
 | Done | `.gitignore` | Added `data/dossiers/*` + `.gitkeep` |
 | Done | `test_dossier.py` | Validated end-to-end on Vale + Petrobras |
 | — | `app/analysis/metrics.py` | DEFERRED (Phase 2 — Calculation Engine, out of scope for v1) |
-| Not started | `app/analysis/playbooks.py` | `load_playbook(sector)` — **Phase 3, next** |
+| Done | `app/analysis/playbooks.py` | `load_playbook(sector)` + `_slugify()` (3.3/3.4) — on `feature/sector-playbooks` |
+| Done | `data/playbooks/_template.md`, `_default.md` | Playbook template (3.1) + sector-agnostic fallback playbook (3.3) — on `feature/sector-playbooks` |
+| Done | `test_playbooks.py` | Validated `_slugify()` against all 70 `SETOR_ATIV` values + `load_playbook()` fallback |
 | Not started | `app/analysis/sections.py` | One generator function per agent (9-agent roster) — Phase 4 |
 | Not started | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` — Phase 5 |
 | Not started | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log — Phase 6 |
 | Not started | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator — Phase 7 |
 | Not started | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/{cnpj}` — Phase 7 |
 | Not started | `app/main.py` | Register new router — Phase 7 |
-| Not started | `data/playbooks/_template.md`, `_default.md` | Sector playbook scaffolding — Phase 3 |
+| Not started | `data/playbooks/<sector_slug>.md` | Real sector playbooks — Phase 3.2, pending faculty meetings |
 | Not started | `data/feedback/_template.md` | Benchmark session note template — Phase 8 |
 | Not started | `test_metrics.py`, `test_analysis_pipeline.py` | Standalone test scripts — Phase 2 (deferred) / Phase 7 |
 
@@ -880,9 +919,17 @@ These don't block starting Phase 1, but will need answers as we go:
 2. **Canonical ratio list (Phase 2.2)** — moot for now, Phase 2 is deferred
    (see Status & Recent Decisions). Revisit when computations come back into
    scope.
-3. **Sector taxonomy** — once we see CVM's actual sector field values (1.5),
-   do they map cleanly onto how you want playbooks organized, or do we need a
-   manual alias layer?
+3. **Sector taxonomy** — RESOLVED for now: CVM's 70 `SETOR_ATIV` values (38
+   substantive sectors + ~30 "Emp. Adm. Part. - X" holding variants + 2
+   edge cases) are used directly as playbook slugs via `_slugify()`, which
+   strips the holding-company prefix so holdings share the underlying
+   sector's playbook. **One known mismatch**: CVM spells the construction
+   sector differently for the base ("Construção Civil, Mat. Constr. e
+   Decoração") vs. holding ("Emp. Adm. Part. - Const. Civil, Mat. Const. e
+   Decoração") variant, so they slug to different filenames — a future
+   construction playbook would need to be duplicated under both slugs (or we
+   add a 1-line manual alias) if a holding company in that sector becomes
+   relevant. Low priority — revisit if it affects a Phase 8 company.
 4. **Conflict threshold (1.6)** — is >1% relative difference the right
    trigger for "mention both numbers", or should it be looser (e.g. >5%) to
    avoid noise from rounding?

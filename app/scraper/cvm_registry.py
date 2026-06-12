@@ -26,6 +26,10 @@ CACHE_PATH = Path(__file__).parent.parent.parent / "data" / "cvm_registry.csv"
 _KEEP_COLS = ["CNPJ_CIA", "DENOM_SOCIAL", "DENOM_COMERC", "SIT", "CD_CVM", "SETOR_ATIV"]
 
 
+def _normalize_cnpj(cnpj: str) -> str:
+    return re.sub(r"[./-]", "", cnpj)
+
+
 def _normalize(text: str) -> str:
     """Lowercase, strip accents, remove non-alphanumeric characters."""
     text = unicodedata.normalize("NFD", text)
@@ -129,6 +133,23 @@ def lookup_company(query: str, force_refresh: bool = False) -> dict | None:
         return _row_to_dict(row)
 
     return None
+
+
+def get_company_by_cnpj(cnpj: str, force_refresh: bool = False) -> dict | None:
+    """
+    Look up a company in the CVM registry by exact CNPJ match.
+
+    Returns:
+        Dict with keys: cnpj, cd_cvm, name, trade_name, sector
+        or None if no match found.
+    """
+    df = _get_registry(force_refresh)
+    cnpj_clean = _normalize_cnpj(cnpj)
+
+    match = df[df["CNPJ_CIA"].apply(_normalize_cnpj) == cnpj_clean]
+    if match.empty:
+        return None
+    return _row_to_dict(match.iloc[0])
 
 
 def _row_to_dict(row: pd.Series) -> dict:

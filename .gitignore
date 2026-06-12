@@ -33,6 +33,7 @@ data/fre/*
 !data/fre/docs/
 data/fre/docs/*
 data/persist/*
+data/dossiers/*
 data/*.csv
 data/*.json
 # Keep .gitkeep files to maintain directory structure on fresh clone
@@ -42,3 +43,4 @@ data/*.json
 !data/fre/.gitkeep
 !data/fre/docs/.gitkeep
 !data/persist/.gitkeep
+!data/dossiers/.gitkeep

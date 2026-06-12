@@ -576,6 +576,22 @@ frameworks**, not fine-tuning (not realistic for this timeline).
 - [ ] **Each playbook is independently useful the moment it exists** — no
       need to wait for all sectors before wiring Phase 3.3/3.4.
 
+**Scalability / how many sectors, really?** CVM's registry has 70 distinct
+`SETOR_ATIV` values, but ~30 of those are "Emp. Adm. Part. - X"
+holding-company variants that automatically share sector X's playbook (via
+`_slugify()`'s prefix-stripping — see Phase 3 status box). So there are **38
+substantive sectors** that would each benefit from their own playbook — that
+is the real number to plan faculty meetings around, not 70.
+
+Adding a sector later is zero-code-change: drop `data/playbooks/<slug>.md`
+in and `load_playbook()` picks it up automatically. The mechanism scales to
+all 38 (or more); the bottleneck is purely the number of faculty meetings.
+**Recommended prioritization**: cover the sectors of the Phase 8 benchmark
+companies first (that list already spans mining, oil & gas, banking, retail,
+healthcare, etc.) — `_default.md`'s generic framework covers every other
+sector indefinitely, so there's no "broken" state for uncovered sectors,
+just a less sector-specific judgment section.
+
 ### 3.3 Storage + loader
 - [x] `data/playbooks/<sector_slug>.md` — one file per sector (none created
       yet — pending 3.2; mechanism is ready).

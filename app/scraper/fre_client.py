@@ -75,13 +75,18 @@ _HEADERS = {
 # Credit-relevant sections
 # Each key is the section number prefix found in the embedded filename.
 # The value is a human-readable label used to tag extracted pages.
-# EXCLUDED: 4.4 (148 pages of individual lawsuits), all of sections 6-12
+# EXCLUDED: 4.4 (148 pages of individual lawsuits), and the rest of sections
+# 6-12 (executive bios, compensation tables, etc. — low credit relevance).
+# Sections 1.12, 5.3, 6.5, 7.1 below are governance-focused additions, picked
+# for direct credit relevance (ownership/group structure, board/management
+# structure, compliance program, corporate restructurings).
 # ---------------------------------------------------------------------------
 
 CREDIT_SECTIONS: dict[str, str] = {
     "1.2":  "Principais atividades do emissor",
     "1.3":  "Segmentos operacionais",
     "1.6":  "Regulação estatal",
+    "1.12": "Operações societárias",
     "1.15": "Contratos relevantes",
     "2.1":  "Condições financeiras e patrimoniais",
     "2.2":  "Resultados operacional e financeiro",
@@ -93,6 +98,9 @@ CREDIT_SECTIONS: dict[str, str] = {
     "4.3":  "Riscos de mercado",
     "4.7":  "Outras contingências relevantes",
     "5.1":  "Gerenciamento de riscos e riscos de mercado",
+    "5.3":  "Programa de integridade",
+    "6.5":  "Organograma dos acionistas e do grupo econômico",
+    "7.1":  "Características dos órgãos de administração e conselho fiscal",
 }
 
 # CVM mandates the FRE XML schema for all listed companies.
@@ -104,6 +112,7 @@ XML_TAG_TO_SECTION: dict[str, str] = {
     "AtividadesEmissorControladas":     "1.2",
     "InfoSegmentosOperacionais":        "1.3",
     "EfeitosRegulacaoEstatal":          "1.6",
+    "OperacoesSocietarias":             "1.12",
     "ContratosRelevantes":              "1.15",
     "CondicoesFinanceirasPatrimoniais": "2.1",
     "ResultadosOperFinanceiros":        "2.2",
@@ -115,6 +124,9 @@ XML_TAG_TO_SECTION: dict[str, str] = {
     "DescricaoRiscosMercado":           "4.3",
     "ContingenciasRelevantes":          "4.7",
     "DescricaoGerenciamentoRiscos":     "5.1",
+    "ProgramaIntegridade":              "5.3",
+    "OrganogramaAcionistasGrupoEconomico": "6.5",
+    "CaracteristicasOrgaosAdmECF":      "7.1",
 }
 
 # CVM Resolução 80 (2022) overhauled the FRE form starting with reference-year

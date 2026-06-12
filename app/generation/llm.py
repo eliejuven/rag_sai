@@ -11,9 +11,12 @@ HEADERS = {
 }
 
 # Mistral's free/low tiers return 429 quickly under concurrent load (e.g.
-# Phase 1's per-FRE-section extraction calls). Retry with backoff rather
-# than silently dropping the section's content.
-_MAX_RETRIES = 4
+# Phase 1's per-FRE-section extraction calls) or for large single requests
+# (e.g. Phase 4's ~20k-token Dossier-context prompts, which can saturate a
+# per-minute token quota on their own). Retry with backoff rather than
+# silently dropping the section's content — 6 retries gives up to ~2 minutes
+# of backoff, comfortably past a per-minute quota reset.
+_MAX_RETRIES = 6
 _BACKOFF_SECONDS = 2.0
 
 

@@ -50,6 +50,11 @@ _MAX_DESC_LEN = 60
 # so for now this runs sequentially.
 _MAX_CONCURRENT_SECTIONS = 1
 
+# Even sequential calls can land close enough together to trip the per-minute
+# token quota with these larger prompts — a short pause between agents spreads
+# them out and noticeably reduces 429s.
+_INTER_SECTION_DELAY_SECONDS = 2.0
+
 
 # ---------------------------------------------------------------------------
 # Evidence index — dedupes Citations dossier-wide so the LLM can reference
@@ -608,16 +613,21 @@ async def generate_all_sections(dossier: CompanyDossier, playbook: str) -> list[
     then Limitations & Coverage (sees 1-8)."""
     primary_agents = [a for a in AGENT_ROSTER if not a.uses_prior_sections]
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SECTIONS)
+    first_call = True
 
-    async def _run(agent: AgentDef) -> SectionOutput:
+    async def _run(agent: AgentDef, prior_sections: list[SectionOutput] | None = None) -> SectionOutput:
+        nonlocal first_call
         async with semaphore:
-            return await _generate_section(dossier, playbook, agent)
+            if not first_call:
+                await asyncio.sleep(_INTER_SECTION_DELAY_SECONDS)
+            first_call = False
+            return await _generate_section(dossier, playbook, agent, prior_sections)
 
     sections = list(await asyncio.gather(*(_run(a) for a in primary_agents)))
 
     for agent in AGENT_ROSTER:
         if not agent.uses_prior_sections:
             continue
-        sections.append(await _generate_section(dossier, playbook, agent, prior_sections=sections))
+        sections.append(await _run(agent, prior_sections=sections))
 
     return sections

@@ -29,17 +29,20 @@ coverage/citation purposes but don't expect much qualitative content from it.
 see the status box at the top of Phase 1 below for full details (files
 created/modified, validation results, the 1.1 migration decision).
 
-**Phase 3 (Sector Playbooks) infrastructure is COMPLETE** on branch
-`feature/sector-playbooks` (off `main`, not yet merged) — see the status box
-at the top of Phase 3 below. The template, loader, and a generic
-`_default.md` playbook exist and are wired up; actual sector-specific
-playbook content (3.2) is still pending faculty meetings.
+**Phase 3 (Sector Playbooks) infrastructure is COMPLETE and merged to
+`main`** — see the status box at the top of Phase 3 below. The template,
+loader, and a generic `_default.md` playbook exist and are wired up; actual
+sector-specific playbook content (3.2) is still pending faculty meetings.
 
-**Next**: merge `feature/sector-playbooks` once this session's commits are
-in, then start Phase 4 (section generators) — this is the **first phase that
-needs the 1-pager/memo template** (see decision 7 and Phase 1/3 status
-boxes). Until the template arrives, Phase 4 work can still proceed using the
-v1 agent roster (decision 5) as a placeholder structure.
+**Phase 4 (Section Generators) is COMPLETE** on branch
+`feature/section-generators` (off `main`, not yet merged) — see the status
+box at the top of Phase 4 below. All 9 v1 agents (decision 5) implemented and
+validated end-to-end on the cached Vale dossier (9/9 sections, 90 statements,
+69 with citations).
+
+**Next**: merge `feature/section-generators` once this session's commits are
+in, then start Phase 5 (Composer) — render `list[SectionOutput]` into the
+1-pager and full memo Markdown.
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -620,6 +623,49 @@ just a less sector-specific judgment section.
 
 ## Phase 4 — Fact/Inference/Judgment Tagging + Section Generators
 
+> **STATUS: COMPLETE (2026-06-12)**, on branch `feature/section-generators`
+> (off `main`). 4.1-4.4 implemented:
+> - `app/analysis/schemas.py` — `TaggedStatement` and `SectionOutput` added
+>   exactly as specified in 4.1.
+> - `app/analysis/sections.py`:
+>   - `_EvidenceIndex` — dedupes every `Citation` in the Dossier by
+>     `(document_id, section, page_number)`, assigning small `[N]` ids. The
+>     Dossier is rendered to Markdown with inline `[N]` markers; agents are
+>     instructed to pick existing `[N]`s for `citation_ids` rather than invent
+>     citations, and `_EvidenceIndex.resolve()` maps ids back to real
+>     `Citation` objects.
+>   - `_build_dossier_context()` — renders the full Dossier as Markdown.
+>     Financial line items are **pivoted** (one row per account_code, periods
+>     as columns) rather than one row per account_code×period — for
+>     Petrobras this collapses ~1,700 rows to 286 and the whole context to
+>     ~72.6k chars (~18k tokens), well within budget, while making
+>     period-over-period trends directly visible (matches `_default.md`'s
+>     "lead with trend, not level" guidance). Qualitative facts are grouped by
+>     FRE section.
+>   - `_fallback_search()` (Decision 2) — plain function call into
+>     `vector_store.search()` + `bm25_index.search()` +
+>     `reciprocal_rank_fusion()`, filtered to `chunk["cnpj"] == dossier.cnpj`,
+>     triggered only when an agent's `focus_fre_sections` intersects
+>     `dossier.coverage.fre_sections_missing`.
+>   - All 9 `generate_<section_id>(dossier, playbook, prior_sections=None)`
+>     functions from the 4.2 roster, sharing `_generate_section()`.
+>   - `generate_all_sections()` — runs agents 1-7, then 8 (MIT Outlook, sees
+>     1-7), then 9 (Limitations & Coverage, sees 1-8), per Decision 6.
+> - `test_sections.py` — end-to-end run on the cached Vale dossier: 9/9
+>   sections, 90 statements, 69 with citations resolving to real Dossier
+>   sources, `derived_from`/`basis` populated correctly for
+>   inference/judgment statements, fallback search correctly populated
+>   `governance_ownership` and `limitations_coverage` for Vale's missing FRE
+>   sections (1.12/5.3/6.5/7.1).
+> - **Known limitation**: Mistral 429s on these large (~20-25k token) prompts.
+>   Mitigated with `_MAX_CONCURRENT_SECTIONS = 1` (sequential),
+>   `_INTER_SECTION_DELAY_SECONDS = 2.0` between agents, and
+>   `app/generation/llm.py`'s `_MAX_RETRIES` raised 4→6 (shared with Phase 1).
+>   A full run takes longer as a result, but completes reliably.
+>
+> **Next**: Phase 5 (Composer) — render `list[SectionOutput]` into the
+> 1-pager and full memo Markdown.
+
 ### 4.1 Tagging schema
 Internal representation — not necessarily what's *displayed* (display format
 TBD pending templates), but how section generators structure their output so
@@ -676,12 +722,12 @@ parallel), then agent 8 (Outlook) receives their `SectionOutput`s as extra
 context, then agent 9 (Limitations) runs last.
 
 ### 4.3 Section generator implementation
-- [ ] `app/analysis/sections.py` (or `app/analysis/sections/<id>.py` if it
+- [x] `app/analysis/sections.py` (or `app/analysis/sections/<id>.py` if it
       gets large) — one function per agent from the 4.2 roster:
       `generate_<section_id>(dossier, playbook, prior_sections=None) -> SectionOutput`
       (no `computed_metrics` param — Phase 2 deferred, see Status & Recent
       Decisions).
-- [ ] Each function receives the **full** `CompanyDossier` (Decision 1) and
+- [x] Each function receives the **full** `CompanyDossier` (Decision 1) and
       builds a prompt with: the full Dossier (or as much as fits — measure
       this empirically per Phase 1.8), the sector playbook text, and — for
       agents 8/9 — `prior_sections` (the `SectionOutput`s already generated).
@@ -689,19 +735,19 @@ context, then agent 9 (Limitations) runs last.
       are the Debt & Capital Structure agent — extract everything relevant to
       debt, leverage, and covenants, even if mentioned in a risk-factors or
       contracts section").
-- [ ] **Fallback search (Decision 2)**: if the Dossier looks thin for this
+- [x] **Fallback search (Decision 2)**: if the Dossier looks thin for this
       agent's topic (e.g. relevant FRE section in
       `DossierCoverage.fre_sections_missing`), call
       `vector_store.search()` / `bm25_index.search()` directly for a few
       extra chunks before building the prompt — plain function call, not a
       tool-use loop. Any fact sourced this way still gets a `Citation`.
-- [ ] Prompt instructs the LLM to return `SectionOutput`-shaped JSON
+- [x] Prompt instructs the LLM to return `SectionOutput`-shaped JSON
       (fact/inference/judgment tagged statements with citations referencing
       `Citation` objects already present in the Dossier — i.e., the LLM
       should **select** citations from what it's given, not invent new ones).
 
 ### 4.4 Output format
-- [ ] Keep `SectionOutput` as the canonical generator output (structured),
+- [x] Keep `SectionOutput` as the canonical generator output (structured),
       separate from the rendered Markdown (Phase 5). This lets Phase 6
       inspect tags/citations programmatically before anything is rendered to
       prose.

@@ -158,34 +158,47 @@ def _period_label(dt_fim: str, period_type: str) -> str:
     return f"{d.strftime('%Y-%m-%d')}"
 
 
-def _format_statement(
-    df: pd.DataFrame,
-    statement_label: str,
-    company_name: str,
-    period_label: str,
-) -> str:
-    """Format a filtered statement DataFrame as structured text for the RAG."""
-    # Keep only current period (ÚLTIMO = this year, PENÚLTIMO = prior year comparison)
+def _clean_statement_df(df: pd.DataFrame) -> tuple[pd.DataFrame, str, int]:
+    """
+    Filter to the current period (ÚLTIMO), dedup to the latest version per
+    account, sort by account code, and determine the reporting scale.
+
+    Returns (cleaned_df, scale, multiplier).
+    """
     if "ORDEM_EXERC" in df.columns:
         df = df[df["ORDEM_EXERC"].str.strip().str.upper() == "ÚLTIMO"]
 
     if df.empty:
-        return ""
+        return df, "UNIDADE", 1
 
-    # Take the latest version per account, then sort by account code
     if "VERSAO" in df.columns:
         df = df.sort_values("VERSAO", ascending=False)
         df = df.drop_duplicates(subset=["CD_CONTA"], keep="first")
     if "CD_CONTA" in df.columns:
         df = df.sort_values("CD_CONTA")
 
-    # Determine scale
     scale = "UNIDADE"
     if "ESCALA_MOEDA" in df.columns:
         scales = df["ESCALA_MOEDA"].dropna().unique()
         if len(scales) > 0:
             scale = scales[0].strip().upper()
+
     multiplier = SCALE_MULTIPLIERS.get(scale, 1)
+    return df, scale, multiplier
+
+
+def _format_statement(
+    df: pd.DataFrame,
+    statement_label: str,
+    company_name: str,
+    period_label: str,
+    scale: str,
+    multiplier: int,
+) -> str:
+    """Format a cleaned statement DataFrame as structured text for the RAG."""
+    if df.empty:
+        return ""
+
     scale_label = f"R$ {scale.title()}"
 
     lines = [
@@ -209,6 +222,36 @@ def _format_statement(
         lines.append(f"{cd} | {ds} | {value_str}")
 
     return "\n".join(lines)
+
+
+def _extract_line_items(
+    df: pd.DataFrame,
+    period_end: str,
+    period_label: str,
+    scale: str,
+    multiplier: int,
+    statement_type: str,
+) -> list[dict]:
+    """Build structured line-item dicts from a cleaned statement DataFrame."""
+    items = []
+    for _, row in df.iterrows():
+        vl_raw = str(row.get("VL_CONTA", "")).strip().replace(",", ".")
+        try:
+            value = float(vl_raw) * multiplier
+        except ValueError:
+            continue
+
+        items.append({
+            "account_code": str(row.get("CD_CONTA", "")).strip(),
+            "description": str(row.get("DS_CONTA", "")).strip(),
+            "value": value,
+            "scale": scale,
+            "period_end": period_end,
+            "period_label": period_label,
+            "statement_type": statement_type,
+        })
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -270,10 +313,31 @@ def fetch_statements(
                 for period in sorted(periods):
                     period_df = df[df[period_col] == period] if period else df
                     label = _period_label(period, doc_type)
-                    text = _format_statement(period_df, stmt_label, company_name, label)
 
-                    if text.strip():
-                        pages.append({"page_number": page_num, "text": text})
-                        page_num += 1
+                    cleaned_df, scale, multiplier = _clean_statement_df(period_df)
+                    if cleaned_df.empty:
+                        continue
+
+                    text = _format_statement(
+                        cleaned_df, stmt_label, company_name, label, scale, multiplier
+                    )
+                    if not text.strip():
+                        continue
+
+                    statement_type = (
+                        str(cleaned_df["_suffix"].iloc[0])
+                        if "_suffix" in cleaned_df.columns
+                        else stmt_label
+                    )
+                    line_items = _extract_line_items(
+                        cleaned_df, period, label, scale, multiplier, statement_type
+                    )
+
+                    pages.append({
+                        "page_number": page_num,
+                        "text": text,
+                        "line_items": line_items,
+                    })
+                    page_num += 1
 
     return pages

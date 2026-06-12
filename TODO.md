@@ -662,9 +662,32 @@ just a less sector-specific judgment section.
 >   `_INTER_SECTION_DELAY_SECONDS = 2.0` between agents, and
 >   `app/generation/llm.py`'s `_MAX_RETRIES` raised 4→6 (shared with Phase 1).
 >   A full run takes longer as a result, but completes reliably.
+> - **Content-quality findings from the Vale run** (informs Phase 5/6.2):
+>   - *Cross-agent numeric inconsistency*: `financial_performance` and
+>     `non_gaap_kpis` each independently derive "EBITDA from DRE for FY2024"
+>     and get different answers (R$72.0bn vs ~R$80.1bn) — each agent does its
+>     own derivation rather than reusing a shared figure. This is exactly what
+>     6.2's consistency check should catch; Phase 5's composer should not just
+>     concatenate sections without reconciling repeated/conflicting numbers.
+>   - *Heavy repetition*: the net-debt/EBITDA ratio (1.27x) and Brumadinho
+>     provision figures are restated near-verbatim across ~5 of the 9
+>     sections — expected from "full Dossier per agent" (Decision 1), but
+>     Phase 5 needs real dedup, not concatenation.
+>   - *Citation-discipline gap*: a few `governance_ownership` statements embed
+>     bracket-style references to raw account codes (e.g. `[2.03.01]`) in the
+>     statement text with an empty `citations` field — looks like a citation
+>     but doesn't resolve via the evidence index. Worth tightening that
+>     agent's prompt.
+>   - *Estimate-as-fact propagation*: `non_gaap_kpis` estimates FY2025
+>     adjusted EBITDA (tagged `inference`, transparently derived via
+>     `derived_from`), but `mit_outlook` then states a "38.5% decline" with
+>     judgment-level confidence built on that estimate, without flagging it's
+>     approximate.
 >
 > **Next**: Phase 5 (Composer) — render `list[SectionOutput]` into the
-> 1-pager and full memo Markdown.
+> 1-pager and full memo Markdown. Given the findings above, Phase 5 likely
+> needs a reconciliation/dedup pass across sections, not pure concatenation —
+> worth deciding this before implementation starts.
 
 ### 4.1 Tagging schema
 Internal representation — not necessarily what's *displayed* (display format

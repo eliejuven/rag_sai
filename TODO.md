@@ -25,7 +25,17 @@ extract correctly across 4 cached companies. **Known limitation**: section
 near-empty (61-536 chars across the 4 tested companies). Keep it for
 coverage/citation purposes but don't expect much qualitative content from it.
 
-**Next**: start Phase 1 (Dossier schema + builder) on a new feature branch.
+**Phase 1 (Company Dossier) is COMPLETE** on branch `feature/company-dossier`
+(off `main`, 5 commits, not yet merged) — see the status box at the top of
+Phase 1 below for full details (files created/modified, validation results,
+the 1.1 migration decision).
+
+**Next**: decide whether to merge `feature/company-dossier` into `main` now
+(same workflow as the FRE governance branch: commit → merge → delete branch →
+push), or keep building Phase 3 (Sector Playbooks) on this branch first. Then
+start Phase 3 — it does **not** need the 1-pager template (see decision 7
+below and the note in Phase 1's status box). Phase 4 is the first phase that
+needs the template.
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -66,6 +76,18 @@ These **supersede** anything in Phases 1-4 below that conflicts:
    all 9 agents in order; later agents (MIT Outlook, Limitations) receive
    earlier agents' `SectionOutput`s as additional context. Dynamic
    per-sector agent selection is a later-week concern, not v1.
+7. **Market valuation (Yahoo/yfinance) and BCB macro data are NOT part of
+   `CompanyDossier`.** They live in `app/scraper/market_data.py` and
+   `app/scraper/bcb_client.py`, fetched live for the `/query` "market"/"macro"
+   intents — not cached in `storage.documents` or `data/dossiers/`. They are
+   point-in-time snapshots (price, P/E, Selic, IPCA...), fundamentally
+   different from the Dossier's stable scraped facts. If a Phase 4 agent
+   needs this (e.g. MIT Outlook citing trading multiples or the Selic rate
+   when framing leverage), it should call `fetch_market_data()` /
+   `get_macro_data()` directly at report-generation time — same "plain
+   function call" pattern as fallback RAG search (decision 2), not by
+   extending `build_dossier()`. **Open question**: which agent(s) need this
+   and how — separate subsection vs. inline framing? Not decided yet.
 
 ---
 
@@ -826,23 +848,26 @@ data/
 | Action | File | Responsibility |
 |---|---|---|
 | Done | `app/scraper/fre_client.py` | Added governance sections 1.12/5.3/6.5/7.1 to `CREDIT_SECTIONS`/`XML_TAG_TO_SECTION` (merged to `main`) |
-| Modify | `app/scraper/cvm_client.py` | Emit structured `line_items` alongside formatted text (1.1) |
-| Modify | `app/scraper/cvm_registry.py` | Keep + expose sector field (1.5) |
-| Create | `app/analysis/__init__.py` | — |
-| Create | `app/analysis/schemas.py` | All Pydantic models (Dossier, metrics, sections, run, errors) |
-| Create | `app/analysis/dossier_builder.py` | `build_dossier(cnpj)` |
-| Create | `app/analysis/metrics.py` | `ACCOUNT_CODE_MAP`, `compute_metrics()` |
-| Create | `app/analysis/playbooks.py` | `load_playbook(sector)` |
-| Create | `app/analysis/sections.py` | One generator function per section |
-| Create | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` |
-| Create | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log |
-| Create | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator |
-| Create | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/{cnpj}` |
-| Modify | `app/main.py` | Register new router |
-| Create | `data/playbooks/_template.md`, `_default.md` | Sector playbook scaffolding |
-| Create | `data/feedback/_template.md` | Benchmark session note template |
-| Create | `test_dossier.py`, `test_metrics.py`, `test_analysis_pipeline.py` | Standalone test scripts (existing convention) |
-| Modify | `.gitignore` | Add `data/dossiers/`, `data/analysis_runs/` |
+| Done | `app/scraper/cvm_client.py` | `_clean_statement_df()`/`_extract_line_items()` emit structured `line_items` alongside formatted text (1.1) — on `feature/company-dossier` |
+| Done | `app/scraper/cvm_registry.py` | `SETOR_ATIV` exposed as `"sector"` (1.5) + new `get_company_by_cnpj()` — on `feature/company-dossier` |
+| Done | `app/analysis/__init__.py` | — |
+| Done | `app/analysis/schemas.py` | All Phase 1 Pydantic models: `Citation`, `FinancialLineItem`, `DisclosedMetric`, `QualitativeFact`, `FactConflict`, `DossierCoverage`, `CompanyDossier` |
+| Done | `app/analysis/extraction.py` | LLM extraction (Mistral, JSON mode): `QualitativeFact`s from all 18 FRE sections, `DisclosedMetric`s from 2.5 |
+| Done | `app/analysis/dossier_builder.py` | `build_dossier(cnpj)` → persists `data/dossiers/<cnpj_digits>.json`; includes conflict detection (1.6) + `DossierCoverage` (1.7) |
+| Done | `app/generation/llm.py` | Added 429 retry/backoff to `chat_completion()` (needed for concurrent FRE extraction calls) |
+| Done | `.gitignore` | Added `data/dossiers/*` + `.gitkeep` |
+| Done | `test_dossier.py` | Validated end-to-end on Vale + Petrobras |
+| — | `app/analysis/metrics.py` | DEFERRED (Phase 2 — Calculation Engine, out of scope for v1) |
+| Not started | `app/analysis/playbooks.py` | `load_playbook(sector)` — **Phase 3, next** |
+| Not started | `app/analysis/sections.py` | One generator function per agent (9-agent roster) — Phase 4 |
+| Not started | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` — Phase 5 |
+| Not started | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log — Phase 6 |
+| Not started | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator — Phase 7 |
+| Not started | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/{cnpj}` — Phase 7 |
+| Not started | `app/main.py` | Register new router — Phase 7 |
+| Not started | `data/playbooks/_template.md`, `_default.md` | Sector playbook scaffolding — Phase 3 |
+| Not started | `data/feedback/_template.md` | Benchmark session note template — Phase 8 |
+| Not started | `test_metrics.py`, `test_analysis_pipeline.py` | Standalone test scripts — Phase 2 (deferred) / Phase 7 |
 
 ---
 
@@ -867,6 +892,12 @@ These don't block starting Phase 1, but will need answers as we go:
    revisit once templates show whether readers should see these tags
    (e.g., visually distinguished "Analyst View" boxes) or whether it's purely
    for the error-log/review pipeline.
+7. **Market valuation / macro data in agents** (see architecture decision 7)
+   — `fetch_market_data()` (Yahoo/yfinance) and `get_macro_data()` (BCB SGS +
+   Focus) are live external feeds, deliberately NOT part of `CompanyDossier`.
+   Which Phase 4 agent(s) should call them, and how should that show up in
+   the report (dedicated subsection vs. inline framing within e.g. MIT
+   Outlook or Debt & Capital Structure)? Not decided.
 
 ---
 

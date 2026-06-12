@@ -23,7 +23,7 @@ REGISTRY_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aber
 CACHE_PATH = Path(__file__).parent.parent.parent / "data" / "cvm_registry.csv"
 
 # Columns we actually need from the registry
-_KEEP_COLS = ["CNPJ_CIA", "DENOM_SOCIAL", "DENOM_COMERC", "SIT", "CD_CVM"]
+_KEEP_COLS = ["CNPJ_CIA", "DENOM_SOCIAL", "DENOM_COMERC", "SIT", "CD_CVM", "SETOR_ATIV"]
 
 
 def _normalize(text: str) -> str:
@@ -137,4 +137,5 @@ def _row_to_dict(row: pd.Series) -> dict:
         "cd_cvm": row["CD_CVM"].strip(),
         "name": row["DENOM_SOCIAL"].strip(),
         "trade_name": row["DENOM_COMERC"].strip(),
+        "sector": row["SETOR_ATIV"].strip(),
     }

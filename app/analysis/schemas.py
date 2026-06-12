@@ -9,6 +9,7 @@ storage.chunks directly.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -76,3 +77,26 @@ class CompanyDossier(BaseModel):
     qualitative_facts: list[QualitativeFact]
     conflicts: list[FactConflict]
     coverage: DossierCoverage
+
+
+class TaggedStatement(BaseModel):
+    """One statement produced by a Phase 4 section generator ("agent").
+
+    - "fact": directly stated in the Dossier — citations non-empty.
+    - "inference": derived via logic/arithmetic from facts — derived_from
+      references the facts combined.
+    - "judgment": requires the sector playbook — basis references which part
+      of the playbook informed it.
+    """
+
+    type: Literal["fact", "inference", "judgment"]
+    text: str
+    citations: list[Citation] = []
+    derived_from: list[str] | None = None
+    basis: str | None = None
+
+
+class SectionOutput(BaseModel):
+    section_id: str  # e.g. "business_segments", "debt_capital_structure"
+    title: str
+    statements: list[TaggedStatement]

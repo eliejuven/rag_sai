@@ -13,6 +13,7 @@ async def chat_completion(
     system_prompt: str,
     user_message: str,
     temperature: float = 0.0,
+    json_mode: bool = False,
 ) -> str:
     """Send a chat completion request to Mistral and return the response text."""
     payload = {
@@ -23,6 +24,8 @@ async def chat_completion(
         ],
         "temperature": temperature,
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(CHAT_URL, json=payload, headers=HEADERS)

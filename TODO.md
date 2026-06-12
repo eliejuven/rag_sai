@@ -10,10 +10,10 @@
 
 ## Status & Recent Decisions (2026-06-12)
 
-**In progress**: on branch `feature/fre-governance-section` (off `main`,
-clean working tree otherwise). Added 4 new sections to `CREDIT_SECTIONS` /
-`XML_TAG_TO_SECTION` in `app/scraper/fre_client.py` for the new Governance
-agent (see roster in item 5 below):
+**Done.** The FRE governance work is merged into `main` and pushed
+(`cb937fe`). `app/scraper/fre_client.py` now has 4 new sections in
+`CREDIT_SECTIONS` / `XML_TAG_TO_SECTION` for the new Governance agent (see
+roster in item 5 below):
 - `1.12` — Operações societárias (corporate restructurings, M&A)
 - `5.3`  — Programa de integridade (anti-corruption/compliance program)
 - `6.5`  — Organograma dos acionistas e do grupo econômico (ownership/group structure)
@@ -25,9 +25,7 @@ extract correctly across 4 cached companies. **Known limitation**: section
 near-empty (61-536 chars across the 4 tested companies). Keep it for
 coverage/citation purposes but don't expect much qualitative content from it.
 
-**Not yet committed.** Next session should: commit this `fre_client.py`
-change, decide whether to merge to `main` now or keep building Phase 1 on
-this branch, then start Phase 1 (Dossier schema + builder).
+**Next**: start Phase 1 (Dossier schema + builder) on a new feature branch.
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -792,7 +790,7 @@ data/
 
 | Action | File | Responsibility |
 |---|---|---|
-| Done (uncommitted) | `app/scraper/fre_client.py` | Added governance sections 1.12/5.3/6.5/7.1 to `CREDIT_SECTIONS`/`XML_TAG_TO_SECTION` (branch `feature/fre-governance-section`) |
+| Done | `app/scraper/fre_client.py` | Added governance sections 1.12/5.3/6.5/7.1 to `CREDIT_SECTIONS`/`XML_TAG_TO_SECTION` (merged to `main`) |
 | Modify | `app/scraper/cvm_client.py` | Emit structured `line_items` alongside formatted text (1.1) |
 | Modify | `app/scraper/cvm_registry.py` | Keep + expose sector field (1.5) |
 | Create | `app/analysis/__init__.py` | — |

@@ -711,7 +711,15 @@ just a less sector-specific judgment section.
 >     never write bracket-style references of any kind in `text`/
 >     `derived_from`/`basis`; `citation_ids` is the only channel for source
 >     ids, `basis` is plain text (e.g. "Manual Setorial §1") with no brackets.
->     Not yet re-validated.
+>     **Re-validated (2026-06-15)**: prompt fix cut leaks from ~10 instances
+>     across 6/9 sections down to 5 instances confined to
+>     `risk_contingencies`'s `derived_from` fields. Since LLM prompt
+>     compliance is probabilistic, added a deterministic backstop:
+>     `_strip_bracket_refs()` in `app/analysis/sections.py` regex-strips any
+>     `[...]` from `text`/`derived_from`/`basis` in `_parse_section_output()`,
+>     so leaked brackets can never reach the composed output regardless of
+>     what the LLM writes. `test_sections_parsing.py` covers this (no LLM,
+>     runs in ms). **Resolved.**
 >   - *Estimate-as-fact propagation*: `non_gaap_kpis` estimates FY2025
 >     adjusted EBITDA (tagged `inference`, transparently derived via
 >     `derived_from`), but `mit_outlook` then states a "38.5% decline" with

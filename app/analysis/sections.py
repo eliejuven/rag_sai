@@ -490,6 +490,19 @@ def _strip_json_fences(raw: str) -> str:
     return raw
 
 
+_BRACKET_REF_RE = re.compile(r"\s*\[[^\]]*\]")
+
+
+def _strip_bracket_refs(text: str) -> str:
+    """Remove leaked bracket-style references (e.g. "[25]", "[2.03.01]",
+    "[Manual Setorial §1]") that the LLM sometimes writes inline despite the
+    prompt rule — citation_ids/basis are the only valid channels for these.
+    """
+    cleaned = _BRACKET_REF_RE.sub("", text)
+    cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def _parse_section_output(raw: str, agent: AgentDef, evidence: _EvidenceIndex) -> SectionOutput:
     try:
         data = json.loads(_strip_json_fences(raw))
@@ -513,14 +526,20 @@ def _parse_section_output(raw: str, agent: AgentDef, evidence: _EvidenceIndex) -
             derived_from = [derived_from]
         elif not isinstance(derived_from, list):
             derived_from = None
+        if derived_from:
+            derived_from = [_strip_bracket_refs(str(d)) for d in derived_from]
+
+        basis = s.get("basis")
+        if basis:
+            basis = _strip_bracket_refs(str(basis))
 
         statements.append(
             TaggedStatement(
                 type=stype,
-                text=str(text).strip(),
+                text=_strip_bracket_refs(str(text)),
                 citations=evidence.resolve(s.get("citation_ids") or []),
                 derived_from=derived_from or None,
-                basis=s.get("basis") or None,
+                basis=basis or None,
             )
         )
 

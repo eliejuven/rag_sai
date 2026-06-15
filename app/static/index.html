@@ -425,7 +425,7 @@
                 </svg>
             </button>
             <input type="file" id="file-input" multiple accept=".pdf">
-            <input type="text" id="question-input" placeholder="Ask a question..." autofocus>
+            <input type="text" id="question-input" placeholder="Ask a question... (or /1-pager <empresa>)" autofocus>
             <button class="send-btn" id="send-btn" onclick="sendQuestion()" title="Send">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z"/>
@@ -512,6 +512,14 @@
             questionInput.value = "";
             sendBtn.disabled = true;
 
+            const onePagerMatch = question.match(/^\/1-?pager\s+(.+)/i);
+            if (onePagerMatch) {
+                await runOnePagerCommand(onePagerMatch[1].trim());
+                sendBtn.disabled = false;
+                questionInput.focus();
+                return;
+            }
+
             // Create a live progress container in the chat
             const progressContainer = document.createElement("div");
             progressContainer.className = "progress-container";
@@ -594,6 +602,118 @@
                 sendBtn.disabled = false;
                 questionInput.focus();
             }
+        }
+
+        async function runOnePagerCommand(company) {
+            if (!company) {
+                appendMessage("error", "Informe o nome da empresa: /1-pager <empresa>");
+                return;
+            }
+
+            const progressContainer = document.createElement("div");
+            progressContainer.className = "progress-container";
+            chat.appendChild(progressContainer);
+            chat.scrollTop = chat.scrollHeight;
+
+            let lastStep = null;
+
+            function addStep(message, isError = false) {
+                if (lastStep) {
+                    lastStep.classList.remove("active");
+                    if (!lastStep.classList.contains("error-step")) {
+                        lastStep.classList.add("done");
+                    }
+                }
+                const step = document.createElement("div");
+                step.className = `progress-step ${isError ? "error-step" : "active"}`;
+                step.innerHTML = `<span class="progress-dot"></span><span>${escapeHtml(message)}</span>`;
+                progressContainer.appendChild(step);
+                lastStep = step;
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            try {
+                const res = await fetch("/analysis/generate/stream", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ company }),
+                });
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    progressContainer.remove();
+                    appendMessage("error", data.detail || "Something went wrong.");
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split("\n\n");
+                    buffer = parts.pop(); // keep incomplete chunk
+
+                    for (const part of parts) {
+                        const line = part.trim();
+                        if (!line.startsWith("data:")) continue;
+                        let event;
+                        try { event = JSON.parse(line.slice(5).trim()); }
+                        catch { continue; }
+
+                        if (event.type === "progress") {
+                            addStep(event.message);
+
+                        } else if (event.type === "result") {
+                            if (lastStep) {
+                                lastStep.classList.remove("active");
+                                lastStep.classList.add("done");
+                            }
+                            progressContainer.remove();
+                            appendOnePagerMessage(event.run);
+
+                        } else if (event.type === "error") {
+                            addStep(`Erro: ${event.message}`, true);
+                            appendMessage("error", event.message);
+                        }
+                    }
+                }
+            } catch (err) {
+                progressContainer.remove();
+                appendMessage("error", "Failed to connect to the server.");
+            }
+        }
+
+        function appendOnePagerMessage(run) {
+            const cnpjDigits = (run.cnpj || "").replace(/\D/g, "");
+
+            const div = document.createElement("div");
+            div.className = "message assistant";
+
+            let html = `<span class="grounded-badge cvm">1-Pager — ${escapeHtml(run.company_name)}</span>`;
+            html += `<div class="answer">${formatAnswer(run.one_pager_md, [])}</div>`;
+            html += `<div class="sources">
+                <span class="source-chip" onclick="downloadOnePagerPdf('${cnpjDigits}')">Baixar PDF</span>
+            </div>`;
+
+            div.innerHTML = html;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+
+            downloadOnePagerPdf(cnpjDigits);
+        }
+
+        function downloadOnePagerPdf(cnpjDigits) {
+            const a = document.createElement("a");
+            a.href = `/analysis/${cnpjDigits}/one-pager.pdf`;
+            a.download = `one-pager-${cnpjDigits}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
         }
 
         function appendMessage(type, text) {

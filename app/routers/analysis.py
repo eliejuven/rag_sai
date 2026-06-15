@@ -4,8 +4,9 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
+from app.analysis.pdf_export import markdown_to_pdf
 from app.analysis.pipeline import generate_credit_analysis
 from app.analysis.schemas import AnalysisRun
 from app.models import AnalysisRequest
@@ -17,6 +18,14 @@ ANALYSIS_RUNS_DIR = Path(__file__).parent.parent.parent / "data" / "analysis_run
 
 def _cnpj_digits(cnpj: str) -> str:
     return re.sub(r"\D", "", cnpj)
+
+
+def _latest_run_dir(cnpj: str) -> Path:
+    cnpj_dir = ANALYSIS_RUNS_DIR / _cnpj_digits(cnpj)
+    run_dirs = sorted((p for p in cnpj_dir.iterdir() if p.is_dir()), reverse=True) if cnpj_dir.exists() else []
+    if not run_dirs:
+        raise HTTPException(status_code=404, detail=f"No analysis found for CNPJ {cnpj}.")
+    return run_dirs[0]
 
 
 @router.post("/analysis/generate", response_model=AnalysisRun)
@@ -86,16 +95,23 @@ async def generate_analysis_stream(request: AnalysisRequest):
 @router.get("/analysis/{cnpj}", response_model=AnalysisRun)
 async def get_latest_analysis(cnpj: str):
     """Return the most recently persisted AnalysisRun for a CNPJ, if any."""
-    cnpj_dir = ANALYSIS_RUNS_DIR / _cnpj_digits(cnpj)
-    if not cnpj_dir.exists():
-        raise HTTPException(status_code=404, detail=f"No analysis found for CNPJ {cnpj}.")
-
-    run_dirs = sorted((p for p in cnpj_dir.iterdir() if p.is_dir()), reverse=True)
-    if not run_dirs:
-        raise HTTPException(status_code=404, detail=f"No analysis found for CNPJ {cnpj}.")
-
-    run_path = run_dirs[0] / "run.json"
+    run_path = _latest_run_dir(cnpj) / "run.json"
     if not run_path.exists():
         raise HTTPException(status_code=404, detail=f"No analysis found for CNPJ {cnpj}.")
 
     return AnalysisRun.model_validate_json(run_path.read_text(encoding="utf-8"))
+
+
+@router.get("/analysis/{cnpj}/one-pager.pdf")
+async def get_one_pager_pdf(cnpj: str):
+    """Render the most recently persisted 1-pager (Markdown) as a PDF."""
+    one_pager_path = _latest_run_dir(cnpj) / "one_pager.md"
+    if not one_pager_path.exists():
+        raise HTTPException(status_code=404, detail=f"No analysis found for CNPJ {cnpj}.")
+
+    pdf_bytes = markdown_to_pdf(one_pager_path.read_text(encoding="utf-8"))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="one-pager-{_cnpj_digits(cnpj)}.pdf"'},
+    )

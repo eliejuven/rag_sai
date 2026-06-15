@@ -76,6 +76,23 @@ feature work here. Phase 8 (Benchmark Round Prep) and follow-up improvements
 section generation, merging `feature/section-generators` to `main`) are open,
 not yet started.
 
+**First improvement (2026-06-15): `/1-pager <empresa>` UI command + PDF
+export.** `app/analysis/pdf_export.py` renders a Markdown string to a PDF
+(`markdown` + `fpdf2`, both pure-Python — `xhtml2pdf`/`weasyprint` were
+rejected, they pull in `pycairo` which needs system Cairo headers).
+Non-Latin-1 punctuation that LLMs commonly emit (em/en-dashes, curly quotes,
+ellipsis) is normalized before rendering; Portuguese accents are natively
+within Latin-1 so they render fine with core fonts. New endpoint `GET
+/analysis/{cnpj}/one-pager.pdf` reads the latest persisted `one_pager.md` and
+returns it as a PDF (verified against the cached Vale run: 200 + valid
+1-page PDF, 404 for unknown CNPJs). `app/static/index.html`: typing
+`/1-pager <empresa>` (or `/1pager`) in the chat box routes to
+`/analysis/generate/stream` (SSE wiring verified — progress events stream
+correctly, dossier cache reused), renders the 1-pager Markdown as a chat
+message on the `result` event, and auto-downloads the PDF (with a "Baixar
+PDF" chip as a manual fallback). Full section-generation run not re-timed
+(~6-35 min, same as Phase 7).
+
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
 

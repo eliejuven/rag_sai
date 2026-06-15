@@ -22,9 +22,9 @@ Phase 5).
 from app.analysis.schemas import Citation, CompanyDossier, SectionOutput, TaggedStatement
 
 _TYPE_HEADINGS = {
-    "fact": "Fatos",
-    "inference": "Análise",
-    "judgment": "Avaliação",
+    "fact": "Facts",
+    "inference": "Analysis",
+    "judgment": "Judgment",
 }
 
 
@@ -57,10 +57,10 @@ class _CitationIndex:
 
     def render_references(self) -> str:
         if not self._citations:
-            return "(nenhuma referência)"
+            return "(no references)"
         lines = []
         for i, c in enumerate(self._citations, 1):
-            label = c.section_label or c.section or "—"
+            label = c.section_label or c.section or "-"
             page = f", p. {c.page_number}" if c.page_number else ""
             lines.append(f"[{i}] {c.filename} — {label}{page}")
         return "\n".join(lines)
@@ -69,9 +69,9 @@ class _CitationIndex:
 def _render_statement_line(statement: TaggedStatement, index: _CitationIndex) -> str:
     suffix = ""
     if statement.type == "inference" and statement.derived_from:
-        suffix = f" _(estimativa: {'; '.join(statement.derived_from)})_"
+        suffix = f" _(estimate: {'; '.join(statement.derived_from)})_"
     elif statement.type == "judgment" and statement.basis:
-        suffix = f" _(base: {statement.basis})_"
+        suffix = f" _(basis: {statement.basis})_"
     markers = index.markers_for(statement)
     if markers:
         markers = f" {markers}"
@@ -81,7 +81,7 @@ def _render_statement_line(statement: TaggedStatement, index: _CitationIndex) ->
 def _render_section_full(section: SectionOutput, index: _CitationIndex) -> str:
     lines = [f"## {section.title}"]
     if not section.statements:
-        lines.append("\n_(nenhuma informação disponível)_")
+        lines.append("\n_(no information available)_")
         return "\n".join(lines)
 
     by_type: dict[str, list[TaggedStatement]] = {"fact": [], "inference": [], "judgment": []}
@@ -101,13 +101,13 @@ def _render_section_full(section: SectionOutput, index: _CitationIndex) -> str:
 def _header(dossier: CompanyDossier) -> str:
     return (
         f"# {dossier.name} ({dossier.trade_name})\n\n"
-        f"CNPJ: {dossier.cnpj} | Setor: {dossier.sector or 'n/d'} | "
-        f"Gerado em: {dossier.generated_at.date().isoformat()}"
+        f"CNPJ: {dossier.cnpj} | Sector: {dossier.sector or 'n/a'} | "
+        f"Generated on: {dossier.generated_at.date().isoformat()}"
     )
 
 
 def _references_block(index: _CitationIndex) -> str:
-    return f"---\n\n## Referências\n\n{index.render_references()}"
+    return f"---\n\n## References\n\n{index.render_references()}"
 
 
 def compose_memo(dossier: CompanyDossier, sections: list[SectionOutput]) -> str:

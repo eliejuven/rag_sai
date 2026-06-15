@@ -81,12 +81,12 @@ async def generate_credit_analysis(
     # ------------------------------------------------------------------
     # Step 3 — Build (or reuse) the Company Dossier
     # ------------------------------------------------------------------
-    await emit(f"Montando dossiê de {display_name}...")
+    await emit(f"Building dossier for {display_name}...")
     dossier = await _load_or_build_dossier(cnpj, force_rebuild=scraped["scraped"])
     await emit(
-        f"Dossiê pronto: {len(dossier.financial_line_items)} itens financeiros, "
-        f"{len(dossier.qualitative_facts)} fatos qualitativos, "
-        f"{len(dossier.disclosed_metrics)} métricas divulgadas."
+        f"Dossier ready: {len(dossier.financial_line_items)} financial line items, "
+        f"{len(dossier.qualitative_facts)} qualitative facts, "
+        f"{len(dossier.disclosed_metrics)} disclosed metrics."
     )
 
     # Step 4 — Calculation Engine (Phase 2) is deferred for v1, skipped.
@@ -99,21 +99,21 @@ async def generate_credit_analysis(
     # ------------------------------------------------------------------
     # Step 6 — Section generators
     # ------------------------------------------------------------------
-    await emit("Gerando seções da análise de crédito (pode levar alguns minutos)...")
+    await emit("Generating credit analysis sections (this may take a few minutes)...")
     sections = await generate_all_sections(dossier, playbook)
-    await emit(f"{len(sections)} seções geradas.")
+    await emit(f"{len(sections)} sections generated.")
 
     # ------------------------------------------------------------------
     # Step 7 — Compose 1-pager + memo
     # ------------------------------------------------------------------
-    await emit("Compondo resumo de 1 página e memo completo...")
+    await emit("Composing 1-pager and full memo...")
     one_pager = compose_one_pager(dossier, sections)
     memo = compose_memo(dossier, sections)
 
     # ------------------------------------------------------------------
     # Step 8 — Review (citation coverage, consistency, confidence)
     # ------------------------------------------------------------------
-    await emit("Executando revisão de qualidade...")
+    await emit("Running quality review...")
     run = build_analysis_run(dossier, sections, one_pager, memo)
 
     # ------------------------------------------------------------------
@@ -121,8 +121,8 @@ async def generate_credit_analysis(
     # ------------------------------------------------------------------
     out_dir = persist_analysis_run(run)
     await emit(
-        f"Análise concluída. Confiança: {run.confidence_score:.0%} "
-        f"({len(run.error_log)} itens no log de revisão). Salvo em {out_dir}."
+        f"Analysis complete. Confidence: {run.confidence_score:.0%} "
+        f"({len(run.error_log)} review log entries). Saved to {out_dir}."
     )
 
     return run

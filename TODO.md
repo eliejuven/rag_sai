@@ -93,6 +93,43 @@ message on the `result` event, and auto-downloads the PDF (with a "Baixar
 PDF" chip as a manual fallback). Full section-generation run not re-timed
 (~6-35 min, same as Phase 7).
 
+**Second improvement (2026-06-15): English-only output.** User feedback on
+the first real `/1-pager Vale` run: report was entirely in Portuguese.
+Translated everything the LLM/composer/pipeline produce or are prompted
+with: `app/analysis/sections.py` (`_SYSTEM_TEMPLATE` now instructs "Respond
+in English", `_PRIOR_SECTIONS_HINT`, all 9 `AGENT_ROSTER` titles/roles/tasks,
+`STATEMENT_LABELS`, and every `_build_dossier_context()` helper — headers,
+table column names, placeholder strings); `app/analysis/composer.py`
+(`_TYPE_HEADINGS` Facts/Analysis/Judgment, header "Sector"/"Generated on",
+"References", estimate/basis suffixes, placeholders); `app/analysis/reviewer.py`
+(`build_limitations()` strings) and `app/analysis/pipeline.py` +
+`app/scraper/pipeline.py` (SSE progress messages). The company's own
+disclosed non-GAAP labels (e.g. "LAJIDA ajustado") may still appear verbatim
+since agents are told to preserve them. **Side effect handled**: agents will
+now write "R$ 80.1 billion" instead of "R$ 80,121 milhões" — extended
+`reviewer.py`'s `_CURRENCY_RE`/`_SCALE_MULTIPLIERS`/`_SCALE_WORD_RE` to also
+recognize English scale words (thousand/million/billion/trillion) so the
+6.2 internal-consistency check doesn't regress. `test_composer.py` and
+`test_reviewer.py` assertions updated to match (both pass). The Dossier
+itself (cached `data/dossiers/<cnpj>.json`, built from Portuguese CVM/FRE
+source documents) and citation `section_label`s remain in Portuguese — only
+the generated report text changed language. **Not yet re-validated
+end-to-end** (no new full pipeline run since this change — next `/1-pager`
+run will be the first to confirm English output + unaffected confidence
+score).
+
+**Open note on runtime (~10 min observed for the user's first run, vs.
+~35 min in the Phase 7 test environment)**: the 9 section-generator agents
+run *sequentially* (`_MAX_CONCURRENT_SECTIONS = 1` in `sections.py`) with a
+2s inter-agent delay, each sending a ~20-25k token prompt (full Dossier +
+playbook + prior sections for agents 8-9) — this was a deliberate tradeoff
+to avoid Mistral 429s on large prompts (see Phase 4 status box). 9 calls x
+(generation time + occasional 429 backoff) is where the minutes go; ~10 min
+suggests Mistral didn't 429 much this run. Faster options if needed later:
+raise `_MAX_CONCURRENT_SECTIONS` (re-introduces 429 risk), shrink the Dossier
+context per agent, or cache/skip unchanged sections — none implemented, not
+requested yet.
+
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
 

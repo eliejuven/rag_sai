@@ -220,7 +220,7 @@ def test_limitations():
     limitations = build_limitations(dossier)
 
     assert any("4/18" in l and "1.12" in l for l in limitations)
-    assert any("conflito" in l for l in limitations)
+    assert any("conflict" in l for l in limitations)
     # dfp/itr years present -> no limitation about missing them
     assert not any("DFP" in l for l in limitations)
     assert not any("ITR" in l for l in limitations)

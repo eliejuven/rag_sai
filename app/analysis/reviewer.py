@@ -112,9 +112,11 @@ def check_citation_coverage(dossier: CompanyDossier, sections: list[SectionOutpu
 # 6.2 — Internal consistency check
 # ---------------------------------------------------------------------------
 
-# Matches "R$ 80.121 milhões", "R$80,121 bilhões", "R$ 1.234.567,89", "R$500 mil", ...
+# Matches "R$ 80.121 milhões", "R$80,121 bilhões", "R$ 1.234.567,89", "R$500 mil",
+# and the English equivalents "R$ 80.1 billion", "R$80,121 million", "R$500 thousand", ...
 _CURRENCY_RE = re.compile(
-    r"R\$\s*([\d.,]+)\s*(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|trilh[õo]es|trilh[ãa]o|mil)?",
+    r"R\$\s*([\d.,]+)\s*(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|trilh[õo]es|trilh[ãa]o|mil"
+    r"|thousand|million|billion|trillion)?",
     re.IGNORECASE,
 )
 
@@ -129,12 +131,17 @@ _SCALE_MULTIPLIERS = {
     "trilhao": 1e12,
     "trilhões": 1e12,
     "trilhoes": 1e12,
+    "thousand": 1e3,
+    "million": 1e6,
+    "billion": 1e9,
+    "trillion": 1e12,
 }
 
 # Matches a scale word as a whole token (word boundaries), longest-first so
 # "milhões"/"bilhões" aren't mistaken for "mil".
 _SCALE_WORD_RE = re.compile(
-    r"\b(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|trilh[õo]es|trilh[ãa]o|mil)\b",
+    r"\b(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|trilh[õo]es|trilh[ãa]o|mil"
+    r"|thousand|million|billion|trillion)\b",
     re.IGNORECASE,
 )
 
@@ -328,18 +335,18 @@ def build_limitations(dossier: CompanyDossier) -> list[str]:
     cov = dossier.coverage
 
     if not cov.dfp_years:
-        limitations.append("Nenhum dado anual (DFP) disponível.")
+        limitations.append("No annual data (DFP) available.")
     if not cov.itr_years:
-        limitations.append("Nenhum dado trimestral (ITR) disponível.")
+        limitations.append("No quarterly data (ITR) available.")
     if cov.fre_sections_missing:
         labels = ", ".join(sorted(cov.fre_sections_missing))
         limitations.append(
-            f"{len(cov.fre_sections_missing)}/{_TOTAL_FRE_SECTIONS} seções do FRE não "
-            f"disponíveis: {labels}."
+            f"{len(cov.fre_sections_missing)}/{_TOTAL_FRE_SECTIONS} FRE sections not "
+            f"available: {labels}."
         )
     if dossier.conflicts:
         limitations.append(
-            f"{len(dossier.conflicts)} conflito(s) entre fontes de dados ainda não resolvido(s)."
+            f"{len(dossier.conflicts)} unresolved data conflict(s) between sources."
         )
 
     return limitations

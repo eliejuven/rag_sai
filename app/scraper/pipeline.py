@@ -128,19 +128,19 @@ async def scrape_and_ingest(
     # ------------------------------------------------------------------
     # Step 1 — Resolve company name via CVM registry
     # ------------------------------------------------------------------
-    await emit(f"Procurando '{company_query}' no cadastro CVM...")
+    await emit(f"Searching for '{company_query}' in the CVM registry...")
 
     company = lookup_company(company_query)
     if company is None:
         msg = (
-            f"Empresa '{company_query}' não encontrada no cadastro CVM. "
-            "Verifique o nome ou tente com o nome oficial (ex: 'Telefônica Brasil' em vez de 'Vivo')."
+            f"Company '{company_query}' not found in the CVM registry. "
+            "Check the spelling or try the official name (e.g. 'Telefônica Brasil' instead of 'Vivo')."
         )
-        await emit(f"ERRO: {msg}")
+        await emit(f"ERROR: {msg}")
         return {"company": None, "scraped": False, "pages_fetched": 0, "chunks_added": 0, "error": msg}
 
     display_name = company["trade_name"] or company["name"]
-    await emit(f"Empresa identificada: {display_name} (CNPJ: {company['cnpj']})")
+    await emit(f"Company identified: {display_name} (CNPJ: {company['cnpj']})")
 
     # ------------------------------------------------------------------
     # Step 2 — Staleness check
@@ -156,8 +156,8 @@ async def scrape_and_ingest(
     if not _is_stale(metadata, cnpj, requested_year=requested_year, fre_year=fre_year):
         last = metadata[cnpj]["last_scraped"][:10]
         await emit(
-            f"Dados de {display_name} já estão indexados e atualizados "
-            f"(última coleta: {last}). Usando dados existentes."
+            f"Data for {display_name} is already indexed and up to date "
+            f"(last fetched: {last}). Using existing data."
         )
         return {
             "company": company,
@@ -170,8 +170,8 @@ async def scrape_and_ingest(
     # ------------------------------------------------------------------
     # Step 3 — Fetch financial statements from CVM
     # ------------------------------------------------------------------
-    await emit(f"Baixando demonstrações financeiras de {display_name} na CVM...")
-    await emit("  → DFP (balanços anuais)...")
+    await emit(f"Downloading financial statements for {display_name} from CVM...")
+    await emit("  → DFP (annual statements)...")
 
     # Build year lists — always include requested_year if provided and not in default range
     current_year = _date.today().year
@@ -189,17 +189,17 @@ async def scrape_and_ingest(
             itr_years=itr_years,
         )
     except Exception as e:
-        msg = f"Falha ao baixar dados da CVM para {display_name}: {e}"
+        msg = f"Failed to download CVM data for {display_name}: {e}"
         logger.error(msg)
-        await emit(f"ERRO: {msg}")
+        await emit(f"ERROR: {msg}")
         return {"company": company, "scraped": False, "pages_fetched": 0, "chunks_added": 0, "error": msg}
 
     if not pages:
-        msg = f"Nenhum dado encontrado na CVM para {display_name} (CNPJ: {cnpj})."
-        await emit(f"AVISO: {msg}")
+        msg = f"No data found on CVM for {display_name} (CNPJ: {cnpj})."
+        await emit(f"WARNING: {msg}")
         return {"company": company, "scraped": False, "pages_fetched": 0, "chunks_added": 0, "error": msg}
 
-    await emit(f"  → {len(pages)} demonstrações baixadas.")
+    await emit(f"  → {len(pages)} statements downloaded.")
 
     # ------------------------------------------------------------------
     # Step 3b — Fetch FRE qualitative sections
@@ -207,7 +207,7 @@ async def scrape_and_ingest(
     # cannot be downloaded (network error, company hasn't filed yet),
     # we log a warning and continue with just the structured data.
     # ------------------------------------------------------------------
-    await emit(f"  → Formulário de Referência {fre_year} (seções qualitativas)...")
+    await emit(f"  → Reference Form (FRE) {fre_year} (qualitative sections)...")
 
     fre_pages = []
     try:
@@ -217,12 +217,12 @@ async def scrape_and_ingest(
             year=fre_year,
         )
         if fre_pages:
-            await emit(f"  → {len(fre_pages)} seções do FRE extraídas.")
+            await emit(f"  → {len(fre_pages)} FRE sections extracted.")
         else:
-            await emit(f"  → AVISO: FRE {fre_year} não disponível para {display_name}. {fre_skip_reason}")
+            await emit(f"  → WARNING: FRE {fre_year} not available for {display_name}. {fre_skip_reason}")
     except Exception as e:
         logger.warning("FRE scraping failed for %s (non-fatal): %s", display_name, e)
-        await emit(f"  → AVISO: FRE indisponível para {display_name} ({e}). Continuando com dados estruturados.")
+        await emit(f"  → WARNING: FRE unavailable for {display_name} ({e}). Continuing with structured data only.")
 
     # ------------------------------------------------------------------
     # Step 4 — Chunk
@@ -230,7 +230,7 @@ async def scrape_and_ingest(
     # dataset). FRE pages are chunked section by section so each chunk
     # keeps its section metadata (section number, label) for citations.
     # ------------------------------------------------------------------
-    await emit("Dividindo em chunks para indexação...")
+    await emit("Splitting into chunks for indexing...")
 
     # DFP/ITR chunks — merged chunking (existing behaviour)
     doc_chunks = chunk_pages(pages)
@@ -259,7 +259,7 @@ async def scrape_and_ingest(
     # ------------------------------------------------------------------
     # Step 5 — Embed + store
     # ------------------------------------------------------------------
-    await emit(f"Indexando {len(all_chunks)} chunks no vector store "
+    await emit(f"Indexing {len(all_chunks)} chunks into the vector store "
                f"({len(doc_chunks)} DFP/ITR + {len(fre_chunks)} FRE)...")
 
     start_index = len(storage.chunks)

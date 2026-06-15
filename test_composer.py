@@ -79,11 +79,11 @@ def main():
     print(one_pager)
 
     assert "## Desempenho Financeiro" in memo
-    assert "**Fatos**" in memo and "**Análise**" in memo and "**Avaliação**" in memo
-    assert "_(estimativa: LAJIDA 2024 vs LAJIDA 2023)_" in memo
-    assert "_(base: Manual Setorial §2)_" in memo
+    assert "**Facts**" in memo and "**Analysis**" in memo and "**Judgment**" in memo
+    assert "_(estimate: LAJIDA 2024 vs LAJIDA 2023)_" in memo
+    assert "_(basis: Manual Setorial §2)_" in memo
     # CIT_A is shared by two statements across sections -> same [n] both times
-    body, _, references = memo.partition("## Referências")
+    body, _, references = memo.partition("## References")
     assert body.count("[1]") == 2
     assert "[1] fre_123_2024.xml" in references
     assert "## Limitações e Cobertura" in memo  # rendered even with no statements

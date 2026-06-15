@@ -96,11 +96,11 @@ class _EvidenceIndex:
 # ---------------------------------------------------------------------------
 
 STATEMENT_LABELS = {
-    "DRE_con": "Demonstração de Resultado (DRE)",
-    "BPA_con": "Balanço Patrimonial Ativo (BPA)",
-    "BPP_con": "Balanço Patrimonial Passivo (BPP)",
-    "DFC_MI_con": "Demonstração de Fluxo de Caixa - Método Indireto (DFC)",
-    "DFC_MD_con": "Demonstração de Fluxo de Caixa - Método Direto (DFC)",
+    "DRE_con": "Income Statement (DRE)",
+    "BPA_con": "Balance Sheet - Assets (BPA)",
+    "BPP_con": "Balance Sheet - Liabilities & Equity (BPP)",
+    "DFC_MI_con": "Cash Flow Statement - Indirect Method (DFC)",
+    "DFC_MD_con": "Cash Flow Statement - Direct Method (DFC)",
 }
 
 _STATEMENT_ORDER = list(STATEMENT_LABELS)
@@ -133,7 +133,7 @@ def _format_financial_statements(
     as rows and periods as columns — far more compact than one row per
     (account, period), and lets the LLM read trends across periods directly."""
     if not line_items:
-        return "(nenhum dado financeiro estruturado disponível)"
+        return "(no structured financial data available)"
 
     by_statement: dict[str, list[FinancialLineItem]] = {}
     for li in line_items:
@@ -160,7 +160,7 @@ def _format_financial_statements(
 
         label = STATEMENT_LABELS.get(statement_type, statement_type)
         header_cols = " | ".join(f"{p} [{period_citation_id[p]}]" for p in periods)
-        lines = [f"### {label}", "", f"| Conta | Descrição | {header_cols} |"]
+        lines = [f"### {label}", "", f"| Account | Description | {header_cols} |"]
         lines.append("|" + "---|" * (2 + len(periods)))
         for code in order:
             row = [code, _truncate(descriptions[code])]
@@ -175,20 +175,20 @@ def _format_financial_statements(
 
 def _format_disclosed_metrics(metrics: list[DisclosedMetric], evidence: _EvidenceIndex) -> str:
     if not metrics:
-        return "(nenhuma métrica não-GAAP extraída)"
+        return "(no non-GAAP metrics extracted)"
     lines = []
     for m in metrics:
         cid = evidence.id_for(m.citation)
-        value = f"{m.value:,.2f}" if m.value is not None else "n/d"
+        value = f"{m.value:,.2f}" if m.value is not None else "n/a"
         unit = m.unit or ""
-        definition = f" — definição: {m.definition}" if m.definition else ""
+        definition = f" - definition: {m.definition}" if m.definition else ""
         lines.append(f"- **{m.label}** ({m.period_label}): {value} {unit}{definition} [{cid}]")
     return "\n".join(lines)
 
 
 def _format_qualitative_facts(facts: list[QualitativeFact], evidence: _EvidenceIndex) -> str:
     if not facts:
-        return "(nenhum fato qualitativo extraído)"
+        return "(no qualitative facts extracted)"
     by_section: dict[str, list[QualitativeFact]] = {}
     for f in facts:
         by_section.setdefault(f.section, []).append(f)
@@ -207,18 +207,18 @@ def _format_qualitative_facts(facts: list[QualitativeFact], evidence: _EvidenceI
 
 def _format_conflicts(dossier: CompanyDossier) -> str:
     if not dossier.conflicts:
-        return "(nenhum conflito de dados identificado)"
+        return "(no data conflicts identified)"
     return "\n".join(f"- {c.description}" for c in dossier.conflicts)
 
 
 def _format_coverage(dossier: CompanyDossier) -> str:
     cov = dossier.coverage
     return (
-        f"- Anos com DFP (anual): {cov.dfp_years or 'nenhum'}\n"
-        f"- Anos com ITR (trimestral): {cov.itr_years or 'nenhum'}\n"
-        f"- Anos com FRE: {cov.fre_years or 'nenhum'}\n"
-        f"- Seções do FRE presentes: {', '.join(cov.fre_sections_present) or 'nenhuma'}\n"
-        f"- Seções do FRE ausentes: {', '.join(cov.fre_sections_missing) or 'nenhuma'}"
+        f"- Years with DFP (annual): {cov.dfp_years or 'none'}\n"
+        f"- Years with ITR (quarterly): {cov.itr_years or 'none'}\n"
+        f"- Years with FRE: {cov.fre_years or 'none'}\n"
+        f"- FRE sections present: {', '.join(cov.fre_sections_present) or 'none'}\n"
+        f"- FRE sections missing: {', '.join(cov.fre_sections_missing) or 'none'}"
     )
 
 
@@ -227,10 +227,10 @@ def _build_dossier_context(dossier: CompanyDossier) -> tuple[str, _EvidenceIndex
     evidence = _EvidenceIndex()
 
     header = (
-        f"# Dossiê — {dossier.name} ({dossier.trade_name})\n"
-        f"CNPJ: {dossier.cnpj} | CD_CVM: {dossier.cd_cvm} | Setor: {dossier.sector or 'n/d'}\n"
-        f"Gerado em: {dossier.generated_at.isoformat()}\n\n"
-        f"## Cobertura de dados\n{_format_coverage(dossier)}"
+        f"# Company Dossier - {dossier.name} ({dossier.trade_name})\n"
+        f"CNPJ: {dossier.cnpj} | CD_CVM: {dossier.cd_cvm} | Sector: {dossier.sector or 'n/a'}\n"
+        f"Generated on: {dossier.generated_at.isoformat()}\n\n"
+        f"## Data Coverage\n{_format_coverage(dossier)}"
     )
 
     financials = _format_financial_statements(dossier.financial_line_items, evidence)
@@ -240,10 +240,10 @@ def _build_dossier_context(dossier: CompanyDossier) -> tuple[str, _EvidenceIndex
 
     context = (
         f"{header}\n\n"
-        f"## Demonstrações financeiras (DFP/ITR)\n\n{financials}\n\n"
-        f"## Métricas não-GAAP divulgadas (FRE 2.5)\n\n{metrics}\n\n"
-        f"## Fatos qualitativos (FRE)\n\n{facts}\n\n"
-        f"## Conflitos de dados\n\n{conflicts}"
+        f"## Financial Statements (DFP/ITR)\n\n{financials}\n\n"
+        f"## Disclosed Non-GAAP Metrics (FRE 2.5)\n\n{metrics}\n\n"
+        f"## Qualitative Facts (FRE)\n\n{facts}\n\n"
+        f"## Data Conflicts\n\n{conflicts}"
     )
     return context, evidence
 
@@ -291,7 +291,7 @@ async def _fallback_search(
 
 
 def _format_fallback_evidence(extra: list[tuple[Citation, str]], evidence: _EvidenceIndex) -> str:
-    lines = ["\n\n## Evidência adicional (busca complementar)\n"]
+    lines = ["\n\n## Additional Evidence (supplementary search)\n"]
     for citation, text in extra:
         cid = evidence.id_for(citation)
         snippet = text.strip().replace("\n", " ")
@@ -317,129 +317,130 @@ class AgentDef:
     uses_prior_sections: bool = False
 
 
-_SYSTEM_TEMPLATE = """Você é um analista de crédito sênior, atuando como {role}, analisando uma companhia aberta brasileira registrada na CVM.
+_SYSTEM_TEMPLATE = """You are a senior credit analyst, acting as {role}, analyzing a publicly listed Brazilian company registered with the CVM (Brazilian Securities Commission).
 
-Você recebe um "Dossiê da Companhia" em Markdown — demonstrações financeiras (DFP/ITR, múltiplos períodos), métricas não-GAAP e fatos qualitativos extraídos do Formulário de Referência (FRE). Cada dado relevante termina com um identificador de fonte entre colchetes, ex: [12] — esses identificadores referenciam citações reais já presentes no Dossiê.{extra}
+You receive a "Company Dossier" in Markdown — financial statements (DFP/ITR, multiple periods), non-GAAP metrics, and qualitative facts extracted from the Reference Form (Formulário de Referência / FRE). Each relevant data point ends with a source identifier in brackets, e.g. [12] — these identifiers reference real citations already present in the Dossier.{extra}
 
-Sua tarefa: {task}
+Your task: {task}
 
-Regras:
-- "fact": afirmação extraída diretamente do Dossiê. "citation_ids" deve conter pelo menos um identificador EXATAMENTE como aparece no Dossiê (nunca invente um número).
-- "inference": conclusão derivada por raciocínio/cálculo a partir de fatos do Dossiê. Preencha "derived_from" com um breve resumo dos fatos combinados; inclua "citation_ids" dos fatos-base sempre que possível.
-- "judgment": julgamento analítico fundamentado no Manual Setorial (Sector Playbook). Preencha "basis" indicando qual seção do manual orientou o julgamento (ex.: "Manual Setorial §1").
-- NUNCA escreva referências entre colchetes (ex.: "[25]", "[2.03.01]", "[Manual Setorial §1]") dentro de "text", "derived_from" ou "basis" — esses campos devem ser texto corrido, sem colchetes. Identificadores de fonte (os números entre colchetes do Dossiê) vão APENAS em "citation_ids"; a seção do Manual Setorial vai apenas em "basis", como texto (ex.: "Manual Setorial §1"), sem colchetes.
-- Para métricas como EBITDA/LAJIDA (ajustado ou não), dívida líquida e similares: se a companhia já divulga esse valor em "Métricas não-GAAP divulgadas (FRE 2.5)", use EXATAMENTE esse valor (com a definição da própria companhia) como "fact" — NUNCA calcule sua própria versão a partir da DRE/BPA/BPP, pois isso gera números conflitantes com outras seções. Só calcule ("inference") uma métrica desse tipo se ela não constar nas Métricas não-GAAP divulgadas.
-- Priorize a tendência ao longo dos períodos disponíveis no Dossiê, não apenas o valor mais recente.
-- Quando faltar dado relevante, diga isso explicitamente em vez de inventar.
-- Produza entre 3 e 10 statements. Responda em português do Brasil.
+Rules:
+- "fact": a statement extracted directly from the Dossier. "citation_ids" must contain at least one identifier EXACTLY as it appears in the Dossier (never invent a number).
+- "inference": a conclusion derived by reasoning/calculation from facts in the Dossier. Fill "derived_from" with a brief summary of the facts combined; include "citation_ids" of the underlying facts whenever possible.
+- "judgment": an analytical judgment grounded in the Sector Playbook. Fill "basis" indicating which section of the playbook informed the judgment (e.g. "Sector Playbook §1").
+- NEVER write bracket-style references (e.g. "[25]", "[2.03.01]", "[Sector Playbook §1]") inside "text", "derived_from", or "basis" — these fields must be plain prose, with no brackets. Source identifiers (the bracketed numbers from the Dossier) go ONLY in "citation_ids"; the Sector Playbook section goes only in "basis", as plain text (e.g. "Sector Playbook §1"), with no brackets.
+- For metrics such as EBITDA (adjusted or not), net debt, and similar: if the company already discloses this value in "Disclosed Non-GAAP Metrics (FRE 2.5)", use EXACTLY that value (with the company's own definition) as a "fact" — NEVER calculate your own version from the DRE/BPA/BPP, as this creates numbers that conflict with other sections. Only calculate ("inference") a metric of this kind if it is absent from the disclosed metrics.
+- Prioritize the trend across the periods available in the Dossier, not just the most recent value.
+- When relevant data is missing, say so explicitly rather than inventing it.
+- The company's own disclosed terms/labels (e.g. "LAJIDA ajustado") may be kept verbatim even if in Portuguese, but the rest of the text must be written in English.
+- Produce between 3 and 10 statements. Respond in English.
 
-Responda APENAS com JSON válido, no formato exato:
-{{"statements": [{{"type": "fact|inference|judgment", "text": "...", "citation_ids": [1,2], "derived_from": ["..."] ou null, "basis": "..." ou null}}]}}"""
+Respond with ONLY valid JSON, in this exact format:
+{{"statements": [{{"type": "fact|inference|judgment", "text": "...", "citation_ids": [1,2], "derived_from": ["..."] or null, "basis": "..." or null}}]}}"""
 
 _PRIOR_SECTIONS_HINT = (
-    " Você também recebe as seções já produzidas pelos outros agentes — use-as como"
-    " contexto adicional, mas não repita o que elas já disseram."
+    " You also receive the sections already produced by the other agents — use them as"
+    " additional context, but don't repeat what they already said."
 )
 
 
 AGENT_ROSTER: list[AgentDef] = [
     AgentDef(
         section_id="business_segments",
-        title="Negócio e Segmentos",
-        role="o agente de Negócio e Segmentos",
+        title="Business & Segments",
+        role="the Business & Segments agent",
         task=(
-            "descreva a identidade da companhia, seus principais negócios e segmentos "
-            "operacionais, e como eles geram receita — com base no Dossiê (especialmente "
+            "describe the company's identity, its main businesses and operating segments, "
+            "and how they generate revenue — based on the Dossier (especially "
             "FRE 1.2, 1.3, 1.6, 2.10)."
         ),
         focus_fre_sections=["1.2", "1.3", "1.6", "2.10"],
     ),
     AgentDef(
         section_id="financial_performance",
-        title="Desempenho Financeiro",
-        role="o agente de Desempenho Financeiro",
+        title="Financial Performance",
+        role="the Financial Performance agent",
         task=(
-            "analise receita, margens e resultado ao longo dos períodos disponíveis na DRE, "
-            "destacando tendências, e relacione com a discussão da administração (FRE 2.1, 2.2) "
-            "quando relevante."
+            "analyze revenue, margins, and net result across the periods available in the "
+            "income statement (DRE), highlighting trends, and relate them to management's "
+            "discussion (FRE 2.1, 2.2) when relevant."
         ),
         focus_fre_sections=["2.1", "2.2"],
     ),
     AgentDef(
         section_id="debt_capital_structure",
-        title="Estrutura de Capital e Endividamento",
-        role="o agente de Estrutura de Capital e Endividamento",
+        title="Debt & Capital Structure",
+        role="the Debt & Capital Structure agent",
         task=(
-            "analise o nível e a trajetória do endividamento, a composição entre dívida de "
-            "curto e longo prazo, e o patrimônio líquido (BPA/BPP), cruzando com contratos "
-            "relevantes, covenants e condições financeiras descritos no FRE (1.15, 2.1)."
+            "analyze the level and trajectory of indebtedness, the mix of short- vs. "
+            "long-term debt, and shareholders' equity (BPA/BPP), cross-referencing relevant "
+            "contracts, covenants, and financial conditions described in the FRE (1.15, 2.1)."
         ),
         focus_fre_sections=["1.15", "2.1"],
     ),
     AgentDef(
         section_id="cash_flow_liquidity",
-        title="Fluxo de Caixa e Liquidez",
-        role="o agente de Fluxo de Caixa e Liquidez",
+        title="Cash Flow & Liquidity",
+        role="the Cash Flow & Liquidity agent",
         task=(
-            "analise a geração de caixa operacional, de investimento e de financiamento (DFC) "
-            "ao longo dos períodos disponíveis, e avalie a posição de liquidez da companhia."
+            "analyze operating, investing, and financing cash flows (DFC) across the "
+            "available periods, and assess the company's liquidity position."
         ),
     ),
     AgentDef(
         section_id="risk_contingencies",
-        title="Fatores de Risco e Contingências",
-        role="o agente de Fatores de Risco e Contingências",
+        title="Risk Factors & Contingencies",
+        role="the Risk Factors & Contingencies agent",
         task=(
-            "identifique os principais fatores de risco e contingências divulgados (FRE 4.1, "
-            "4.2, 4.3, 4.7, 5.1, 2.8) e, usando o Manual Setorial, julgue quais desses riscos "
-            "são mais relevantes para a análise de crédito desta companhia especificamente."
+            "identify the main disclosed risk factors and contingencies (FRE 4.1, "
+            "4.2, 4.3, 4.7, 5.1, 2.8) and, using the Sector Playbook, judge which of these "
+            "risks are most relevant to this company's credit analysis specifically."
         ),
         focus_fre_sections=["4.1", "4.2", "4.3", "4.7", "5.1", "2.8"],
     ),
     AgentDef(
         section_id="non_gaap_kpis",
-        title="Métricas Não-GAAP e KPIs",
-        role="o agente de Métricas Não-GAAP e KPIs",
+        title="Non-GAAP Metrics & KPIs",
+        role="the Non-GAAP Metrics & KPIs agent",
         task=(
-            "apresente as métricas não-GAAP divulgadas pela companhia (FRE 2.5), preservando "
-            "os nomes e definições exatos, e — quando possível — relacione-as com as linhas "
-            "correspondentes da DRE/DFC para dar contexto."
+            "present the non-GAAP metrics disclosed by the company (FRE 2.5), preserving "
+            "their exact names and definitions, and — where possible — relate them to the "
+            "corresponding DRE/DFC lines for context."
         ),
         focus_fre_sections=["2.5"],
     ),
     AgentDef(
         section_id="governance_ownership",
-        title="Governança e Estrutura Societária",
-        role="o agente de Governança e Estrutura Societária",
+        title="Governance & Ownership Structure",
+        role="the Governance & Ownership Structure agent",
         task=(
-            "descreva a estrutura societária, o grupo econômico, o programa de integridade e "
-            "a composição dos órgãos de administração (FRE 1.12, 5.3, 6.5, 7.1), destacando "
-            "qualquer elemento relevante para risco de crédito (ex.: operações com partes "
-            "relacionadas, concentração de controle)."
+            "describe the ownership structure, the economic group, the integrity program, "
+            "and the composition of management bodies (FRE 1.12, 5.3, 6.5, 7.1), highlighting "
+            "anything relevant to credit risk (e.g., related-party transactions, "
+            "concentration of control)."
         ),
         focus_fre_sections=["1.12", "5.3", "6.5", "7.1"],
     ),
     AgentDef(
         section_id="mit_outlook",
-        title="Perspectiva (MIT Outlook)",
-        role="o agente de Perspectiva — a 'lente MIT' de julgamento analítico sênior",
+        title="Outlook (MIT Outlook)",
+        role="the Outlook agent — the 'MIT lens' of senior analytical judgment",
         task=(
-            "com base no Dossiê e nas seções já geradas pelos outros agentes, formule a "
-            "perspectiva de crédito da companhia — a opinião analítica que amarra os fatos e "
-            "inferências anteriores em um julgamento coerente, seguindo explicitamente o "
-            "Manual Setorial (especialmente a seção 5, 'raciocínio característico')."
+            "based on the Dossier and the sections already generated by the other agents, "
+            "formulate the company's credit outlook — the analytical opinion that ties the "
+            "prior facts and inferences together into a coherent judgment, explicitly "
+            "following the Sector Playbook (especially section 5, 'characteristic reasoning')."
         ),
         uses_prior_sections=True,
     ),
     AgentDef(
         section_id="limitations_coverage",
-        title="Limitações e Cobertura",
-        role="o agente de Limitações e Cobertura (meta-análise)",
+        title="Limitations & Coverage",
+        role="the Limitations & Coverage agent (meta-analysis)",
         task=(
-            "com base na cobertura de dados do Dossiê (seções do FRE ausentes, anos "
-            "disponíveis), nos conflitos de dados identificados, e nas seções já geradas, "
-            "liste explicitamente as limitações desta análise — o que não pôde ser avaliado "
-            "por falta de dados, e quaisquer conflitos não resolvidos."
+            "based on the Dossier's data coverage (missing FRE sections, available years), "
+            "the data conflicts identified, and the sections already generated, explicitly "
+            "list this analysis's limitations — what could not be assessed due to missing "
+            "data, and any unresolved conflicts."
         ),
         uses_prior_sections=True,
     ),
@@ -467,7 +468,7 @@ def _format_prior_sections(prior_sections: list[SectionOutput]) -> str:
         for st in s.statements:
             lines.append(f"- [{st.type}] {st.text}")
         blocks.append("\n".join(lines))
-    return "\n\n## Seções já geradas\n\n" + "\n\n".join(blocks)
+    return "\n\n## Previously Generated Sections\n\n" + "\n\n".join(blocks)
 
 
 def _build_user_message(
@@ -477,7 +478,7 @@ def _build_user_message(
     agent: AgentDef,
     prior_sections: list[SectionOutput] | None,
 ) -> str:
-    parts = [context, f"\n\n## Manual Setorial (Sector Playbook)\n\n{playbook}"]
+    parts = [context, f"\n\n## Sector Playbook\n\n{playbook}"]
     if agent.uses_prior_sections:
         parts.append(_format_prior_sections(prior_sections or []))
     return "".join(parts)

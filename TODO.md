@@ -51,9 +51,16 @@ implemented and tested with synthetic data; not yet run on real
 to `main` until the full pipeline (through Phase 6) is working end-to-end —
 all work for now happens on this branch.
 
-**Next**: run `test_sections.py` end-to-end (validates the disclosed-metrics
-fix) and feed its output into `compose_memo`/`compose_one_pager` for a
-real-data sanity check, then start Phase 6 (Review/Critic Agent + Error Log).
+**Phase 6 (Review/Critic Agent + Error Log) is COMPLETE** on the same branch
+— see the status box at the top of Phase 6 below. `app/analysis/reviewer.py`
+implements citation coverage (6.1), internal consistency (6.2), confidence
+score v0 (6.3), and `AnalysisRun` build + persistence (6.4); `test_reviewer.py`
+covers all of it with synthetic data (no LLM); real-data validation via
+`test_review_e2e.py` pending (running in background).
+
+**Next**: confirm the `test_review_e2e.py` run on the cached Vale dossier
+looks sane (error_log entries, confidence score/breakdown, persisted
+`data/analysis_runs/.../run.json`), then Phase 7 (Orchestration & API).
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -890,36 +897,115 @@ context, then agent 9 (Limitations) runs last.
 
 ## Phase 6 — Review / Critic Agent + Error Log
 
+> **STATUS: COMPLETE (2026-06-15)**, on branch `feature/section-generators`
+> (off `main`). 6.1-6.4 implemented, no LLM calls (pure post-processing,
+> runs in milliseconds):
+> - `app/analysis/schemas.py` — `ErrorLogEntry` and `AnalysisRun` added
+>   exactly as specified in 6.4.
+> - `app/analysis/reviewer.py`:
+>   - `check_citation_coverage(dossier, sections)` (6.1) — every `"fact"`
+>     `TaggedStatement` must have non-empty `citations`, and each `Citation`
+>     must resolve to a real Dossier source (same dedup key as Phase 4/5's
+>     `_EvidenceIndex`/`_CitationIndex`: `(document_id, section, page_number)`).
+>     Violations are `critical`/`generation`.
+>   - `check_internal_consistency(dossier, sections)` (6.2) — extracts every
+>     `"R$ ..."` mention (with `mil`/`milhões`/`bilhões`/`trilhões` scale
+>     words, handling both "." and "," as Brazilian thousands/decimal
+>     separators via `_parse_brl_number`) from `"fact"`/`"inference"`
+>     statements and cross-checks it against `dossier.financial_line_items` +
+>     `dossier.disclosed_metrics` (1% relative tolerance, matching the
+>     `dossier_builder` conflict threshold). Also checks `Dossier.conflicts`
+>     for the "mention both values" convention. Violations are
+>     `warning`/`validation`.
+>   - `compute_confidence(dossier, sections, error_log)` (6.3) — v0 weighted
+>     average of 4 components (`coverage`, `traceability`, `consistency`,
+>     `divergence`), each 0-1, returned with a breakdown dict.
+>     `divergence` is hardcoded to `1.0` (Phase 2 deferred — nothing to
+>     compare disclosed metrics against yet).
+>   - `build_limitations(dossier)` — human-readable limitations from
+>     `DossierCoverage` (missing FRE sections, missing DFP/ITR years) +
+>     unresolved `conflicts`.
+>   - `review()`, `build_analysis_run()`, `persist_analysis_run()` — tie it
+>     together into an `AnalysisRun` and write
+>     `data/analysis_runs/<cnpj_digits>/<timestamp>/{one_pager,memo,run}.{md,md,json}`.
+> - `test_reviewer.py` — synthetic Dossier/sections covering: missing
+>   citation, citation that doesn't resolve, a number matching a disclosed
+>   metric, a number matching a financial line item, a number matching
+>   neither, a partially-mentioned conflict, confidence breakdown arithmetic,
+>   and a persist+reload round-trip via `AnalysisRun.model_validate_json`. All
+>   pass, no LLM calls.
+> - `data/analysis_runs/` added to `.gitignore` (regeneratable cache, same
+>   pattern as `data/dossiers/`), with `.gitkeep`.
+> - **Re-validated (2026-06-15)**: `test_review_e2e.py` — full
+>   `generate_all_sections()` + compose + review on the cached Vale dossier,
+>   persisted to `data/analysis_runs/33592510000154/<timestamp>/`.
+>   `confidence_score: 0.873`, breakdown `{coverage: 0.778, traceability:
+>   0.976, consistency: 0.738, divergence: 1.0}`. `error_log` has 12 entries
+>   (1 critical, 11 warning) — first run (37 entries) revealed a
+>   currency-number-parsing bug (LLM writes e.g. "R$ 50,199 milhões" meaning
+>   50,199 *million* — comma as a thousands separator — which a naive
+>   "comma=decimal" parser misread as R$50,199, off by 1000x). Fixed with
+>   `_candidate_amounts()`: when a number has exactly one separator and
+>   exactly 3 digits after it, both the decimal and thousands-grouped readings
+>   are returned as candidates, and a match against *either* counts. Remaining
+>   12 entries are genuine v0 findings, not parsing artifacts:
+>   - 1 critical: a `limitations_coverage` "fact" statement (about the 4
+>     missing FRE sections themselves) has no citation — arguably correct,
+>     since "data X is absent" has no source to cite.
+>   - ~9 warnings: segment-level revenue (FRE 2.2, not in consolidated
+>     `financial_line_items`), FY2025 figures not yet in structured DFP/ITR
+>     line items (dividends paid, provisions), and computed deltas
+>     (e.g. "aumento de R$23,7bi") that are inferences, not raw disclosed
+>     values — all correctly "not directly traceable to
+>     financial_line_items/disclosed_metrics" by design.
+>   - 2 warnings: `risk_contingencies` writes a couple of bare numbers
+>     ("R$ 30.529", "R$ 76.209", "R$ 101.958") **without a scale word**
+>     (should be "bilhões"), while the *same* figures appear correctly
+>     scaled elsewhere (e.g. `mit_outlook`: "R$ 30,529 bilhões") — a real,
+>     useful catch (ambiguous/unitless figures in the rendered memo).
+>
+> **Next**: Phase 7 (Orchestration & API) — `generate_credit_analysis()` ties
+> Phases 1-6 into one pipeline entrypoint. The `risk_contingencies`
+> missing-scale-word issue could optionally get a Phase 4 prompt tweak
+> (alongside the existing bracket-leak rule), but isn't blocking.
+
 ### 6.1 Citation coverage check
-- [ ] For every `TaggedStatement` of type `"fact"`, verify `citations` is
+- [x] For every `TaggedStatement` of type `"fact"`, verify `citations` is
       non-empty and each `Citation` resolves to a real
       `document_id`/`section`/`page` in the Dossier. Flag violations as
       `critical` errors — per Week 6's eventual guardrail ("no financial
       metric without source"), but for this week, **log rather than block**.
 
 ### 6.2 Internal consistency check
-- [ ] Cross-reference numeric values mentioned across different
+- [x] Cross-reference numeric values mentioned across different
       `SectionOutput`s against `financial_line_items` /
       `computed_metrics` — flag if a section states a number that doesn't
-      match the Dossier's value for that (account, period).
-- [ ] Cross-reference against `Dossier.conflicts` (Phase 1.6) — if a section
+      match the Dossier's value for that (account, period). (`computed_metrics`
+      doesn't exist yet — Phase 2 deferred — so this checks against
+      `financial_line_items` and `disclosed_metrics` only.)
+- [x] Cross-reference against `Dossier.conflicts` (Phase 1.6) — if a section
       uses a figure that has a recorded conflict, verify the "mention both"
       convention was applied.
 
 ### 6.3 Confidence score (v0 — explicitly a first pass)
-- [ ] Simple weighted heuristic, e.g.:
-  - `% of FRE sections present / 14` (coverage)
+- [x] Simple weighted heuristic, e.g.:
+  - `% of FRE sections present / 14` (coverage) — implemented as `/18` (the
+    current `CREDIT_SECTIONS` total, up from 14 after the 2026-06-12
+    governance-sections addition).
   - `% of "fact" statements with valid citations` (traceability)
-  - `1 − (# unresolved conflicts / # numeric facts used)` (consistency)
+  - `1 − (# unresolved conflicts / # numeric facts used)` (consistency) —
+    implemented as `1 − (# validation warnings / # numeric fact|inference
+    statements)`.
   - `1` if no disclosed-vs-computed divergence > threshold, else scaled down
+    — hardcoded `1.0` for now (Phase 2 deferred, nothing to compare).
   - Combine into a single 0–1 score + a breakdown dict so it's interpretable,
     not a black box.
-- [ ] Explicitly label this as v0 in the output — refine after seeing it run
+- [x] Explicitly label this as v0 in the output — refine after seeing it run
       against real companies and (eventually) against analyst feedback in
       later weeks.
 
 ### 6.4 Error log + limitations output
-- [ ] `app/analysis/schemas.py` additions:
+- [x] `app/analysis/schemas.py` additions:
   ```python
   class ErrorLogEntry(BaseModel):
       severity: Literal["critical", "warning", "info"]
@@ -939,7 +1025,7 @@ context, then agent 9 (Limitations) runs last.
       confidence_score: float
       confidence_breakdown: dict[str, float]
   ```
-- [ ] Persist each run to `data/analysis_runs/<cnpj>/<timestamp>/` — keeps
+- [x] Persist each run to `data/analysis_runs/<cnpj>/<timestamp>/` — keeps
       historical runs for comparison as the pipeline improves week-to-week
       (directly useful for Week 5's "deep review of a sample" and Week 7's
       "compare agent output to human analysis").
@@ -1073,7 +1159,7 @@ data/
 | Done | `test_playbooks.py` | Validated `_slugify()` against all 70 `SETOR_ATIV` values + `load_playbook()` fallback |
 | Not started | `app/analysis/sections.py` | One generator function per agent (9-agent roster) — Phase 4 |
 | Not started | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` — Phase 5 |
-| Not started | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log — Phase 6 |
+| Done | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log — Phase 6 |
 | Not started | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator — Phase 7 |
 | Not started | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/{cnpj}` — Phase 7 |
 | Not started | `app/main.py` | Register new router — Phase 7 |

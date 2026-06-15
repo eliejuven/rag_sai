@@ -100,3 +100,23 @@ class SectionOutput(BaseModel):
     section_id: str  # e.g. "business_segments", "debt_capital_structure"
     title: str
     statements: list[TaggedStatement]
+
+
+class ErrorLogEntry(BaseModel):
+    severity: Literal["critical", "warning", "info"]
+    stage: Literal["extraction", "calculation", "validation", "generation", "review"]
+    message: str
+    location: str | None = None  # e.g. "section=credit_metrics, statement_idx=3"
+
+
+class AnalysisRun(BaseModel):
+    cnpj: str
+    company_name: str
+    generated_at: datetime
+    one_pager_md: str
+    memo_md: str
+    sections: list[SectionOutput]
+    limitations: list[str]
+    error_log: list[ErrorLogEntry]
+    confidence_score: float
+    confidence_breakdown: dict[str, float]

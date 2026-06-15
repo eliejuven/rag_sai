@@ -685,7 +685,14 @@ just a less sector-specific judgment section.
 >     only `inference`-compute a metric themselves if it's absent from that
 >     list. The company's own disclosed, cited figure is the single source of
 >     truth — no cross-agent reconciliation needed for metrics CVM/FRE already
->     discloses. Not yet re-validated with a full run (see Phase 4 Next).
+>     discloses. **Re-validated (2026-06-15)**: full re-run on Vale, every
+>     EBITDA/LAJIDA mention across all 9 sections now consistently uses the
+>     disclosed R$80.121bn figure (citation `[25]`) — no more conflicting
+>     numbers. Bonus: `limitations_coverage` now explicitly flags that the
+>     2025 disclosed LAJIDA is missing and that a DRE-derived EBITDA for 2025
+>     (R$31.969bn) isn't directly comparable — a transparent caveat rather
+>     than a silent inconsistency. Run also improved overall: 98 statements,
+>     82 with citations (up from 90/69).
 >   - *Heavy repetition*: the net-debt/EBITDA ratio (1.27x) and Brumadinho
 >     provision figures are restated near-verbatim across ~5 of the 9
 >     sections — expected from "full Dossier per agent" (Decision 1), but

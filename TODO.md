@@ -697,11 +697,21 @@ just a less sector-specific judgment section.
 >     provision figures are restated near-verbatim across ~5 of the 9
 >     sections — expected from "full Dossier per agent" (Decision 1), but
 >     Phase 5 needs real dedup, not concatenation.
->   - *Citation-discipline gap*: a few `governance_ownership` statements embed
->     bracket-style references to raw account codes (e.g. `[2.03.01]`) in the
->     statement text with an empty `citations` field — looks like a citation
->     but doesn't resolve via the evidence index. Worth tightening that
->     agent's prompt.
+>   - *Citation-discipline gap* — **FIX APPLIED (2026-06-15), pending
+>     re-validation**: turned out to be much wider than `governance_ownership`.
+>     The Phase 5 e2e run (`test_composer_e2e.py` on real Vale output) showed
+>     `debt_capital_structure`, `cash_flow_liquidity`, `non_gaap_kpis`, and
+>     `limitations_coverage` also embed raw bracket-references in `text` /
+>     `derived_from` / `basis` — evidence-index ids (`[25, 29, 32]`), account
+>     codes (`[2.02.04.02.05]`), and even `[Manual Setorial §1]` written
+>     inline. These never resolve via `_EvidenceIndex` and leak into the
+>     composed output as literal brackets sitting next to the composer's own
+>     `[n]` markers (e.g. memo line: "...monitoramento contínuo. **[25, 29,
+>     32]** _(base: Manual Setorial §1)_"). Fix: new `_SYSTEM_TEMPLATE` rule —
+>     never write bracket-style references of any kind in `text`/
+>     `derived_from`/`basis`; `citation_ids` is the only channel for source
+>     ids, `basis` is plain text (e.g. "Manual Setorial §1") with no brackets.
+>     Not yet re-validated.
 >   - *Estimate-as-fact propagation*: `non_gaap_kpis` estimates FY2025
 >     adjusted EBITDA (tagged `inference`, transparently derived via
 >     `derived_from`), but `mit_outlook` then states a "38.5% decline" with

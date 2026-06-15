@@ -23,3 +23,8 @@ class QueryResponse(BaseModel):
     answer: str
     grounded: bool
     chunks: list[ChunkResult]
+
+
+class AnalysisRequest(BaseModel):
+    company: str
+    year: int | None = None

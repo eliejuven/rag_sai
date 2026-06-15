@@ -55,12 +55,26 @@ all work for now happens on this branch.
 — see the status box at the top of Phase 6 below. `app/analysis/reviewer.py`
 implements citation coverage (6.1), internal consistency (6.2), confidence
 score v0 (6.3), and `AnalysisRun` build + persistence (6.4); `test_reviewer.py`
-covers all of it with synthetic data (no LLM); real-data validation via
-`test_review_e2e.py` pending (running in background).
+covers all of it with synthetic data (no LLM); re-validated end-to-end on
+real Vale data via `test_review_e2e.py`.
 
-**Next**: confirm the `test_review_e2e.py` run on the cached Vale dossier
-looks sane (error_log entries, confidence score/breakdown, persisted
-`data/analysis_runs/.../run.json`), then Phase 7 (Orchestration & API).
+**Phase 7 (Orchestration & API) is COMPLETE** on the same branch — see the
+status box at the top of Phase 7 below. `app/analysis/pipeline.py`'s
+`generate_credit_analysis()` ties Phases 1-6 into one entrypoint;
+`app/routers/analysis.py` exposes it as `POST /analysis/generate`,
+`POST /analysis/generate/stream` (SSE), and `GET /analysis/{cnpj}`, wired
+into `app/main.py`. Validated end-to-end on Vale via `test_analysis_pipeline.py`
+(confidence `0.883`) and `GET /analysis/{cnpj}` via a local `uvicorn` instance.
+
+**v1 is now functional end-to-end** (Phases 1, 3, 4, 5, 6, 7 — Phase 2
+deferred): a company name + optional year goes in, a persisted `AnalysisRun`
+(1-pager + memo + error log + confidence score) comes out, over HTTP.
+
+**Next**: per the user's "v1 functional, then improvements" framing — pause
+feature work here. Phase 8 (Benchmark Round Prep) and follow-up improvements
+(Phase 2 calc engine, more sector playbooks, output templates, parallelizing
+section generation, merging `feature/section-generators` to `main`) are open,
+not yet started.
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -1034,8 +1048,56 @@ context, then agent 9 (Limitations) runs last.
 
 ## Phase 7 — Orchestration & API
 
+> **STATUS: COMPLETE (2026-06-15)**, on branch `feature/section-generators`
+> (off `main`). 7.1-7.3 implemented:
+> - `app/analysis/pipeline.py` — `generate_credit_analysis(company_query,
+>   year=None, progress=None) -> AnalysisRun`. Steps 1-2 (resolve company +
+>   ensure data indexed) delegate to `scrape_and_ingest()`, which already
+>   resolves the company and reports progress — no duplicate registry lookup.
+>   Step 3 (Dossier) is `_load_or_build_dossier()`: reuses the cached
+>   `data/dossiers/<cnpj>.json` unless `scrape_and_ingest()` actually scraped
+>   new data, avoiding ~18 redundant FRE-extraction LLM calls on every
+>   request. Step 4 (Calculation Engine) is skipped — Phase 2 deferred.
+>   Steps 5-9 (playbook, section generators, composer, reviewer, persist) call
+>   straight into Phases 3-6 as already implemented.
+> - `app/routers/analysis.py`:
+>   - `POST /analysis/generate` — body `{"company": "...", "year": 2024}` →
+>     runs the full pipeline synchronously, returns `AnalysisRun` JSON. 404 if
+>     the company isn't in the CVM registry, 502 if CVM data couldn't be
+>     fetched.
+>   - `POST /analysis/generate/stream` — SSE variant mirroring
+>     `/query/stream`: `progress` events while running, then one `result`
+>     event with the full `AnalysisRun`.
+>   - `GET /analysis/{cnpj}` — returns the most recently persisted
+>     `AnalysisRun` for that CNPJ (digits-only match), 404 if none exists.
+> - `app/main.py` — registered `analysis.router`.
+> - `test_analysis_pipeline.py` — real end-to-end run on Vale (cached
+>   dossier reused, `scraped["scraped"] == False`): all 9 sections generated,
+>   composed, reviewed, and persisted to
+>   `data/analysis_runs/33592510000154/20260615T173246Z/`.
+>   `confidence_score: 0.883`, breakdown `{coverage: 0.778, traceability:
+>   0.919, consistency: 0.833, divergence: 1.0}`, error_log has 9 entries (3
+>   critical, 6 warning) — same categories as Phase 6's re-validation (citation-less
+>   `limitations_coverage` meta-statements about absent data, and
+>   segment-level/FY2025/non-consolidated figures not in
+>   `financial_line_items`). Confirms the reviewer generalizes across runs
+>   despite LLM non-determinism (different statements/counts each run).
+> - **Runtime**: a full run (9 sequential section-generator agents, Mistral
+>   429 backoff) took ~35 minutes in this environment — acceptable for a v1
+>   synchronous endpoint given the SSE variant exists for progress feedback,
+>   but a candidate for future parallelization/caching work.
+> - Verified `GET /analysis/{cnpj}` against the persisted Vale run via a local
+>   `uvicorn` instance — returns 200 with the full `AnalysisRun`, 404 for
+>   unknown CNPJs.
+>
+> **Next**: Phase 8 (Benchmark Round Prep) — or, per the user's "v1
+> functional, then improvements" framing, pause here: the full pipeline
+> (Phases 1-7) now runs end-to-end via `generate_credit_analysis()` and is
+> reachable over HTTP. Improvements (Phase 2 calc engine, more playbooks,
+> output templates, parallelizing section generation) are open follow-ups.
+
 ### 7.1 Pipeline entrypoint
-- [ ] `app/analysis/pipeline.py`:
+- [x] `app/analysis/pipeline.py`:
   ```python
   async def generate_credit_analysis(
       company_query: str,
@@ -1053,19 +1115,19 @@ context, then agent 9 (Limitations) runs last.
       # 8. run reviewer → error_log, confidence [Phase 6]
       # 9. persist AnalysisRun, return it
   ```
-- [ ] Mirror the `emit()` progress-callback pattern from
+- [x] Mirror the `emit()` progress-callback pattern from
       `app/scraper/pipeline.py` so this can eventually stream progress over
       SSE the same way `/query/stream` does.
 
 ### 7.2 Router
-- [ ] New `app/routers/analysis.py`:
+- [x] New `app/routers/analysis.py`:
   - `POST /analysis/generate` — body: `{"company": "...", "year": 2024}` →
     triggers `generate_credit_analysis`, returns `AnalysisRun` (or an SSE
     stream variant `/analysis/generate/stream`, mirroring `/query/stream`,
     if generation is slow enough to warrant progress updates).
   - `GET /analysis/{cnpj}` — returns the most recent persisted `AnalysisRun`
     for that company, if any.
-- [ ] Wire the router into `app/main.py`.
+- [x] Wire the router into `app/main.py`.
 
 ### 7.3 Persistence layout
 ```
@@ -1083,11 +1145,12 @@ data/
         memo.md
         run.json                     # full AnalysisRun incl. error_log
 ```
-- [ ] Add `data/dossiers/`, `data/analysis_runs/` to `.gitignore` (consistent
+- [x] Add `data/dossiers/`, `data/analysis_runs/` to `.gitignore` (consistent
       with how `data/persist/` is already excluded) — these are
-      regeneratable caches, not source.
-- [ ] `data/playbooks/` should **NOT** be gitignored — these are
-      hand-curated, valuable artifacts from faculty meetings.
+      regeneratable caches, not source. (Done in Phase 6.)
+- [x] `data/playbooks/` should **NOT** be gitignored — these are
+      hand-curated, valuable artifacts from faculty meetings. (Confirmed not
+      gitignored.)
 
 ---
 
@@ -1157,15 +1220,16 @@ data/
 | Done | `app/analysis/playbooks.py` | `load_playbook(sector)` + `_slugify()` (3.3/3.4) — on `feature/sector-playbooks` |
 | Done | `data/playbooks/_template.md`, `_default.md` | Playbook template (3.1) + sector-agnostic fallback playbook (3.3) — on `feature/sector-playbooks` |
 | Done | `test_playbooks.py` | Validated `_slugify()` against all 70 `SETOR_ATIV` values + `load_playbook()` fallback |
-| Not started | `app/analysis/sections.py` | One generator function per agent (9-agent roster) — Phase 4 |
-| Not started | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` — Phase 5 |
+| Done | `app/analysis/sections.py` | One generator function per agent (9-agent roster) — Phase 4 |
+| Done | `app/analysis/composer.py` | `compose_one_pager()`, `compose_memo()` — Phase 5 |
 | Done | `app/analysis/reviewer.py` | Citation/consistency checks, confidence score, error log — Phase 6 |
-| Not started | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator — Phase 7 |
-| Not started | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/{cnpj}` — Phase 7 |
-| Not started | `app/main.py` | Register new router — Phase 7 |
+| Done | `app/analysis/pipeline.py` | `generate_credit_analysis()` orchestrator — Phase 7 |
+| Done | `app/routers/analysis.py` | `/analysis/generate`, `/analysis/generate/stream`, `/analysis/{cnpj}` — Phase 7 |
+| Done | `app/main.py` | Registered `analysis.router` — Phase 7 |
 | Not started | `data/playbooks/<sector_slug>.md` | Real sector playbooks — Phase 3.2, pending faculty meetings |
 | Not started | `data/feedback/_template.md` | Benchmark session note template — Phase 8 |
-| Not started | `test_metrics.py`, `test_analysis_pipeline.py` | Standalone test scripts — Phase 2 (deferred) / Phase 7 |
+| — | `test_metrics.py` | Standalone test script — Phase 2 (deferred) |
+| Done | `test_analysis_pipeline.py` | End-to-end orchestrator test — Phase 7 |
 
 ---
 

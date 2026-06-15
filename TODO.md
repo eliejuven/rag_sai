@@ -38,11 +38,22 @@ sector-specific playbook content (3.2) is still pending faculty meetings.
 `feature/section-generators` (off `main`, not yet merged) — see the status
 box at the top of Phase 4 below. All 9 v1 agents (decision 5) implemented and
 validated end-to-end on the cached Vale dossier (9/9 sections, 90 statements,
-69 with citations).
+69 with citations). A follow-up fix makes agents use the company's own
+disclosed EBITDA/leverage figures (FRE 2.5) instead of each computing their
+own — re-validation pending.
 
-**Next**: merge `feature/section-generators` once this session's commits are
-in, then start Phase 5 (Composer) — render `list[SectionOutput]` into the
-1-pager and full memo Markdown.
+**Phase 5 (Composer) is COMPLETE** on the same branch — see the status box at
+the top of Phase 5 below. `compose_memo()` and `compose_one_pager()`
+implemented and tested with synthetic data; not yet run on real
+`generate_all_sections()` output.
+
+**Decision (2026-06-15)**: staying on `feature/section-generators`, no merge
+to `main` until the full pipeline (through Phase 6) is working end-to-end —
+all work for now happens on this branch.
+
+**Next**: run `test_sections.py` end-to-end (validates the disclosed-metrics
+fix) and feed its output into `compose_memo`/`compose_one_pager` for a
+real-data sanity check, then start Phase 6 (Review/Critic Agent + Error Log).
 
 ### Architecture refinements agreed since the roadmap below was written
 These **supersede** anything in Phases 1-4 below that conflicts:
@@ -789,17 +800,59 @@ context, then agent 9 (Limitations) runs last.
 
 ## Phase 5 — Composer (1-Pager + Full Memo)
 
-- [ ] `app/analysis/composer.py`:
+> **STATUS: COMPLETE (2026-06-15)**, on branch `feature/section-generators`
+> (off `main`).
+> - `app/analysis/composer.py`:
+>   - `_CitationIndex` — per-document dedup of `Citation`s (same
+>     `(document_id, section, page_number)` key as Phase 4's
+>     `_EvidenceIndex`), assigning local `[n]` ids and rendering a
+>     "Referências" appendix (`filename — section_label, p. N`).
+>   - `compose_memo(dossier, sections)` — renders every section as a `##`
+>     heading, with statements grouped into **Fatos / Análise / Avaliação**
+>     subheadings by `TaggedStatement.type`. `inference` statements show
+>     `_(estimativa: <derived_from>)_`; `judgment` statements show
+>     `_(base: <basis>)_`. Sections with no statements render
+>     `_(nenhuma informação disponível)_` rather than a bare heading.
+>   - `compose_one_pager(dossier, sections)` — one highlight line per
+>     section: its first `judgment` statement (the analytical takeaway), or
+>     its lead statement if the section has no judgment. Sections with zero
+>     statements are skipped entirely (no "(nenhuma informação)" noise on the
+>     1-pager).
+>   - Both composers build their own `_CitationIndex`, so each document gets
+>     its own self-contained `[1]`, `[2]`... numbering — matches the existing
+>     per-response convention in `app/generation/prompts.py`.
+> - `test_composer.py` — hand-built `SectionOutput`s (shared citation across
+>   sections, an inference with `derived_from`, a judgment with `basis`, an
+>   empty section) verify: fact/inference/judgment grouping, citation dedup
+>   (`CIT_A` → same `[1]` in both places it's used), empty-section handling in
+>   both composers, and that the 1-pager only ever surfaces statements that
+>   also appear in the memo. Runs in seconds — no LLM calls.
+> - **Pending real-data check**: not yet run against a real
+>   `generate_all_sections()` output (no persisted `SectionOutput` JSON
+>   exists yet — see Phase 4 Next). Once a validation run completes, sanity
+>   check `compose_memo`/`compose_one_pager` on the real Vale sections,
+>   especially how the repetition/citation-discipline findings from Phase 4
+>   look once rendered.
+> - **Pending templates**: once the 1-page/memo templates are shared, this is
+>   the file that changes most — section list (4.2) and composition logic
+>   adapt to match the template's structure/ordering. Current output is a
+>   reasonable default, not the final layout.
+>
+> **Next**: Phase 6 (Review/Critic Agent + Error Log) — citation coverage
+> check (6.1), internal consistency check (6.2, partly addressed by the
+> Phase 4 disclosed-metrics fix), confidence score (6.3).
+
+- [x] `app/analysis/composer.py`:
   - `compose_one_pager(dossier, sections: list[SectionOutput]) -> str` (Markdown)
   - `compose_memo(dossier, sections: list[SectionOutput]) -> str` (Markdown)
-- [ ] Both composers read from the **same** `sections` list — guarantees the
+- [x] Both composers read from the **same** `sections` list — guarantees the
       1-pager and memo never disagree (1-pager is a condensed
       view/selection, not an independently-generated summary).
-- [ ] Citation rendering: reuse the existing numbered-citation convention
+- [x] Citation rendering: reuse the existing numbered-citation convention
       from `app/generation/prompts.py` (`build_rag_prompt`'s `[1]`, `[2]`
       style) — render each `TaggedStatement`'s citations as `[n]` inline,
       with a references appendix mapping `[n]` → document/section/page.
-- [ ] Output as Markdown for now (matches "first version" scope). PDF/Word
+- [x] Output as Markdown for now (matches "first version" scope). PDF/Word
       export is a later-week concern (see
       [Looking Ahead](#looking-ahead-how-this-maps-to-weeks-47)) — don't
       build rendering infrastructure for that yet.

@@ -663,12 +663,18 @@ just a less sector-specific judgment section.
 >   `app/generation/llm.py`'s `_MAX_RETRIES` raised 4→6 (shared with Phase 1).
 >   A full run takes longer as a result, but completes reliably.
 > - **Content-quality findings from the Vale run** (informs Phase 5/6.2):
->   - *Cross-agent numeric inconsistency*: `financial_performance` and
->     `non_gaap_kpis` each independently derive "EBITDA from DRE for FY2024"
->     and get different answers (R$72.0bn vs ~R$80.1bn) — each agent does its
->     own derivation rather than reusing a shared figure. This is exactly what
->     6.2's consistency check should catch; Phase 5's composer should not just
->     concatenate sections without reconciling repeated/conflicting numbers.
+>   - *Cross-agent numeric inconsistency* — **FIXED (2026-06-15)**:
+>     `financial_performance` and `non_gaap_kpis` each independently derived
+>     "EBITDA from DRE for FY2024" and got different answers (R$72.0bn
+>     self-computed vs R$80.1bn from the company's own disclosed "LAJIDA
+>     (EBITDA) ajustado"). Fix: `_SYSTEM_TEMPLATE` in `app/analysis/sections.py`
+>     now has an explicit rule — for EBITDA/LAJIDA, net debt, and similar
+>     metrics, agents MUST use the value already in "Métricas não-GAAP
+>     divulgadas (FRE 2.5)" (`dossier.disclosed_metrics`) as a `fact`, and may
+>     only `inference`-compute a metric themselves if it's absent from that
+>     list. The company's own disclosed, cited figure is the single source of
+>     truth — no cross-agent reconciliation needed for metrics CVM/FRE already
+>     discloses. Not yet re-validated with a full run (see Phase 4 Next).
 >   - *Heavy repetition*: the net-debt/EBITDA ratio (1.27x) and Brumadinho
 >     provision figures are restated near-verbatim across ~5 of the 9
 >     sections — expected from "full Dossier per agent" (Decision 1), but
@@ -684,10 +690,14 @@ just a less sector-specific judgment section.
 >     judgment-level confidence built on that estimate, without flagging it's
 >     approximate.
 >
-> **Next**: Phase 5 (Composer) — render `list[SectionOutput]` into the
-> 1-pager and full memo Markdown. Given the findings above, Phase 5 likely
-> needs a reconciliation/dedup pass across sections, not pure concatenation —
-> worth deciding this before implementation starts.
+> **Next**: re-run `test_sections.py` to confirm the disclosed-metrics rule
+> above fixes the EBITDA inconsistency without breaking other sections, then
+> Phase 5 (Composer) — render `list[SectionOutput]` into the 1-pager and full
+> memo Markdown. The remaining findings (repetition, citation-discipline gap,
+> estimate-as-fact propagation) still apply — Phase 5 needs at least light
+> dedup, not pure concatenation, but the "which number is right" problem is
+> now solved at the source (Phase 4 prompts) rather than needing
+> post-hoc reconciliation.
 
 ### 4.1 Tagging schema
 Internal representation — not necessarily what's *displayed* (display format

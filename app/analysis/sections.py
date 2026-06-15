@@ -327,6 +327,7 @@ Regras:
 - "fact": afirmação extraída diretamente do Dossiê. "citation_ids" deve conter pelo menos um identificador EXATAMENTE como aparece no Dossiê (nunca invente um número).
 - "inference": conclusão derivada por raciocínio/cálculo a partir de fatos do Dossiê. Preencha "derived_from" com um breve resumo dos fatos combinados; inclua "citation_ids" dos fatos-base sempre que possível.
 - "judgment": julgamento analítico fundamentado no Manual Setorial (Sector Playbook). Preencha "basis" indicando qual seção do manual orientou o julgamento (ex.: "Manual Setorial §1").
+- Para métricas como EBITDA/LAJIDA (ajustado ou não), dívida líquida e similares: se a companhia já divulga esse valor em "Métricas não-GAAP divulgadas (FRE 2.5)", use EXATAMENTE esse valor (com a definição da própria companhia) como "fact" — NUNCA calcule sua própria versão a partir da DRE/BPA/BPP, pois isso gera números conflitantes com outras seções. Só calcule ("inference") uma métrica desse tipo se ela não constar nas Métricas não-GAAP divulgadas.
 - Priorize a tendência ao longo dos períodos disponíveis no Dossiê, não apenas o valor mais recente.
 - Quando faltar dado relevante, diga isso explicitamente em vez de inventar.
 - Produza entre 3 e 10 statements. Responda em português do Brasil.

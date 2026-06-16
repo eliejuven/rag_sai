@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from app.routers import analysis, ingest, query
+from app.routers import analysis, committee, ingest, query
 from app.persistence import load_state
 
 app = FastAPI(
@@ -14,6 +14,7 @@ app = FastAPI(
 app.include_router(ingest.router)
 app.include_router(query.router)
 app.include_router(analysis.router)
+app.include_router(committee.router, prefix="/committee", tags=["committee"])
 
 
 @app.on_event("startup")

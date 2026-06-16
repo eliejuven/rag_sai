@@ -633,7 +633,7 @@
             }
 
             try {
-                const res = await fetch("/analysis/generate/stream", {
+                const res = await fetch("/committee/generate/stream", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ company }),
@@ -674,7 +674,7 @@
                                 lastStep.classList.add("done");
                             }
                             progressContainer.remove();
-                            appendOnePagerMessage(event.run);
+                            appendOnePagerMessage(event.report);
 
                         } else if (event.type === "error") {
                             addStep(`Erro: ${event.message}`, true);
@@ -688,29 +688,31 @@
             }
         }
 
-        function appendOnePagerMessage(run) {
-            const cnpjDigits = (run.cnpj || "").replace(/\D/g, "");
+        function appendOnePagerMessage(report) {
+            const cnpjDigits = (report.cnpj || "").replace(/\D/g, "");
+            const displayName = report.trade_name || report.name || report.cnpj;
 
             const div = document.createElement("div");
             div.className = "message assistant";
 
-            let html = `<span class="grounded-badge cvm">1-Pager — ${escapeHtml(run.company_name)}</span>`;
-            html += `<div class="answer">${formatAnswer(run.one_pager_md, [])}</div>`;
+            let html = `<span class="grounded-badge cvm">1-Pager — ${escapeHtml(displayName)}</span>`;
+            html += `<div class="answer">${formatAnswer(report.report_pt_md, [])}</div>`;
             html += `<div class="sources">
-                <span class="source-chip" onclick="downloadOnePagerPdf('${cnpjDigits}')">Baixar PDF</span>
+                <span class="source-chip" onclick="downloadCommitteePdf('${cnpjDigits}', 'pt')">Baixar PDF (PT)</span>
+                <span class="source-chip" onclick="downloadCommitteePdf('${cnpjDigits}', 'en')">Download PDF (EN)</span>
             </div>`;
 
             div.innerHTML = html;
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
 
-            downloadOnePagerPdf(cnpjDigits);
+            downloadCommitteePdf(cnpjDigits, "pt");
         }
 
-        function downloadOnePagerPdf(cnpjDigits) {
+        function downloadCommitteePdf(cnpjDigits, lang) {
             const a = document.createElement("a");
-            a.href = `/analysis/${cnpjDigits}/one-pager.pdf`;
-            a.download = `one-pager-${cnpjDigits}.pdf`;
+            a.href = `/committee/${cnpjDigits}/report.pdf?lang=${lang}`;
+            a.download = `committee-${cnpjDigits}-${lang}.pdf`;
             document.body.appendChild(a);
             a.click();
             a.remove();

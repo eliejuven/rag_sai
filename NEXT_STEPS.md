@@ -41,6 +41,33 @@
   rewrite to shrink `.git` — the latter needs a force-push and care around
   other clones/branches.
 
-## Improvement backlog (TBD)
+## Current priority: Credit Committee 1-Pager
 
-Open — to be filled in as concrete next steps are picked.
+Branch: `feature/credit-committee-template` (off `main`)
+Architecture guide: `docs/committee-1pager-architecture.md`
+
+**Goal**: `/1-pager <empresa>` produces a filled credit committee 1-pager
+matching the Itaú internal template format, in Portuguese (primary) + English
+(translated), with two versions saved per run.
+
+**What auto-fills from public data:**
+- Financial table "Realizado" column (Faturamento, EBITDA, Margem, DL, Alavancagem)
+  extracted from CVM financial statements and FRE 2.5 disclosed metrics.
+- Framing paragraph, Grau de preocupação, Próximos passos — LLM-generated
+  from FRE 4.1 (risk factors) + sector playbook + Yahoo market data + BCB macro.
+- Ratings — best-effort extraction from FRE text, else `[PREENCHER]`.
+- 3 narrative sections (Highlights Consolidado, Highlights Holding, Perspectivas)
+  — 4 purpose-built agents replacing the 9-agent memo pipeline for this output.
+
+**What stays as `[PREENCHER]` (internal bank data, never public):**
+- Limite, Risco, Run-off %, Share [Banco], Último comitê, Projetado CS/CT
+  — analyst provides via `PUT /committee/{cnpj}/bank-context`, cached per CNPJ.
+
+**Pipeline A (9 agents → full memo) is untouched.** `POST /analysis/generate`
+still works. Only the `/1-pager` UI command is rerouted to the new endpoint.
+
+## Other improvement backlog
+
+- Runtime speedup (raise `_MAX_CONCURRENT_SECTIONS`, shrink per-agent context)
+- Model choice (per-pipeline config constant)
+- Remove ~90MB CVM data files from git history (`git rm --cached` + rewrite)

@@ -167,6 +167,20 @@ def _str_field(value: object, sep: str = " ") -> str:
 # Agent 1 — Header
 # ---------------------------------------------------------------------------
 
+_GROUNDING_RULES = """\
+GROUNDING RULES (mandatory — violations invalidate the output):
+- Every fact and number you write MUST appear verbatim or be directly calculable from
+  values explicitly stated in the Dossier provided below.
+- Do NOT compute derived metrics (YoY growth %, margins, ratios, multipliers) unless
+  the exact figure is explicitly stated in the Dossier (e.g. in FRE 2.5 disclosed metrics
+  or in the financial statements with both operands present).  If you would need to divide
+  or subtract to produce a number, do NOT include it — write 'informação não disponível'.
+- Do NOT draw on your training-data knowledge about this company. Use ONLY the
+  information present in the Dossier context below.  If a fact is not in the Dossier,
+  omit it or write 'informação não disponível'.
+- Never fabricate ratings, targets, guidance figures, or events not mentioned in the Dossier.
+"""
+
 _HEADER_SYSTEM = """\
 You are a senior credit analyst at a major Brazilian bank, preparing the header block
 of an internal credit committee 1-pager (similar to Itaú's internal format).
@@ -175,14 +189,17 @@ You receive a Company Dossier in Markdown — financial statements (DRE, BPA, BP
 disclosed non-GAAP metrics (FRE 2.5), and qualitative facts extracted from the
 Reference Form (FRE).  You may also receive Yahoo Finance market data and BCB macro context.
 
+""" + _GROUNDING_RULES + """
 Your tasks:
 1. Write a **framing_paragraph**: 1–2 bold sentences capturing the key credit story
-   of the most recent fiscal year.  Be specific — mention revenue scale, EBITDA margin
-   trend, leverage level, and the main risk or strength.
+   of the most recent fiscal year.  Cite only numbers that are explicitly in the Dossier
+   (e.g. the disclosed revenue figure, a stated EBITDA margin, a disclosed leverage ratio).
+   If a metric is not stated in the Dossier, describe the trend qualitatively instead.
 2. Assign a **grau_preocupacao** ("Baixo", "Médio", "Alto", or "Muito Alto") based on
    the company's financial health (leverage, liquidity, margin trend, refinancing risk)
    and qualitative risks (FRE 4.1 risk factors, sector dynamics, macro).
-3. Write a **grau_preocupacao_reasoning**: 1–2 sentences explaining the assigned level.
+3. Write a **grau_preocupacao_reasoning**: 1–2 sentences explaining the assigned level,
+   citing only figures present in the Dossier.
 4. Write **proximos_passos**: 2–3 concise action items / monitoring points for the
    credit committee (e.g. "Monitor leverage reduction trajectory; watch for debt rollover
    at end of 2026; follow up on regulatory risk flagged in FRE 4.1").
@@ -267,11 +284,15 @@ internal credit committee 1-pager for a Brazilian company.
 You receive the full Company Dossier (financial statements, disclosed non-GAAP metrics,
 FRE qualitative facts).
 
+""" + _GROUNDING_RULES + """
 Write **4 to 6 concise bullet points** describing the most recent year's consolidated
-operational and financial performance.  Each bullet must be specific and quantified —
-mention actual numbers (revenue growth %, EBITDA margin, net debt level, leverage ratio).
-Avoid vague statements.  Focus on: revenue drivers (volume vs. price), EBITDA evolution,
-Capex, financial expenses and their impact, working capital, and year-end leverage.
+operational and financial performance.  Only cite numbers that appear explicitly in the
+Dossier (account values from the financial statements, or figures from the disclosed
+non-GAAP metrics).  Do NOT compute growth rates, margins, or ratios yourself — if a
+percentage or ratio is not stated in the Dossier, describe the trend qualitatively
+(e.g. "receita cresceu no período" instead of "receita cresceu 12%").
+Focus on: revenue drivers (volume vs. price), EBITDA evolution, Capex, financial
+expenses and their impact, working capital, and year-end leverage.
 
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 
@@ -331,13 +352,16 @@ internal credit committee 1-pager for a Brazilian company.
 
 You receive the Company Dossier (balance sheet, FRE governance/ownership sections).
 
+""" + _GROUNDING_RULES + """
 Your task: write **3 to 4 bullet points** on the holding-company view — dividend upstream
 flows (dividends paid by subsidiaries to the holding), support provided to subsidiaries,
 intercompany dynamics, and holding-level leverage separate from the consolidated view.
+Only cite dividend amounts, intercompany balances, or leverage figures that are explicitly
+stated in the Dossier.  If the amount is not stated, describe the relationship qualitatively.
 
 IMPORTANT: if the company has a single legal entity with no holding structure, write
-exactly one bullet: "Not applicable — company has a single-entity structure with no
-holding layer."
+exactly one bullet: "Não aplicável — empresa possui estrutura de entidade única, sem
+camada holding."
 
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 
@@ -394,13 +418,20 @@ internal credit committee 1-pager for a Brazilian company.
 You receive the Company Dossier (FRE forward-looking sections, risk factors) and
 optionally Yahoo Finance market data.
 
-Write **3 to 4 forward-looking bullet points** covering: deleveraging trajectory
-(when leverage is expected to drop), new concessions or M&A plans mentioned by
-management, asset sale programmes, debt maturity / rollover schedule, and any
-macro or sector tailwinds/headwinds relevant to the company.
+""" + _GROUNDING_RULES + """
+Write **3 to 4 forward-looking bullet points** covering: deleveraging trajectory,
+new concessions or M&A plans mentioned by management, asset sale programmes, debt
+maturity / rollover schedule, and macro or sector tailwinds/headwinds.
 
-Be specific and grounded in evidence from the FRE.  Do not invent numbers.
-If the company mentions a specific target leverage or debt reduction plan, quote it.
+Strict rules:
+- Only include guidance targets, leverage goals, or debt schedules that are explicitly
+  stated in the FRE text.  If management did not disclose a specific target, do NOT
+  invent one.
+- Macro / sector context (from Yahoo Finance market data or BCB data) may be used to
+  describe tailwinds/headwinds qualitatively, but do not attribute specific macro numbers
+  (GDP growth %, Selic rate) to the company's own projections.
+- Quote management language verbatim when the FRE uses it (e.g. "a companhia planeja
+  reduzir a alavancagem para abaixo de 2x até 2026" is a direct quote — use it).
 
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 

@@ -30,10 +30,15 @@ class CommitteeHeaderOutput(BaseModel):
     extracted_ratings: dict[str, str] = {}
 
 
+class CitedBullet(BaseModel):
+    text: str
+    source: str = ""  # e.g. "Conta 3.01 — DRE_con — FY 2024" or "FRE 4.1 — Fatores de Risco"
+
+
 class CommitteeSection(BaseModel):
     section_id: str
     year_label: str
-    bullets: list[str]
+    bullets: list[CitedBullet]
 
 
 class FinancialTableRow(BaseModel):

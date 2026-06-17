@@ -11,6 +11,7 @@ from typing import Optional
 
 from app.analysis.committee.schemas import (
     BankContext,
+    CitedBullet,
     CommitteeHeaderOutput,
     CommitteeSection,
     CommitteeReport,
@@ -20,6 +21,33 @@ from app.analysis.schemas import CompanyDossier, DisclosedMetric, FinancialLineI
 from app.generation.llm import chat_completion
 
 _FILL = "[PREENCHER]"
+
+_SUP_TRANS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _sup(n: int) -> str:
+    """Convert integer to Unicode superscript digits: 12 → ¹²"""
+    return str(n).translate(_SUP_TRANS)
+
+
+def _render_cited_bullets(
+    bullets: list[CitedBullet],
+    counter: int,
+) -> tuple[str, int, list[tuple[int, str]]]:
+    """Render bullets with superscript footnote numbers where a source exists.
+
+    Returns (markdown_block, next_counter, [(n, source), ...])
+    """
+    lines = []
+    footnotes: list[tuple[int, str]] = []
+    for b in bullets:
+        if b.source and b.source.strip():
+            lines.append(f"- {b.text}{_sup(counter)}")
+            footnotes.append((counter, b.source))
+            counter += 1
+        else:
+            lines.append(f"- {b.text}")
+    return "\n".join(lines), counter, footnotes
 
 
 # ---------------------------------------------------------------------------
@@ -270,17 +298,21 @@ def compose_committee_template_pt(
     grau_reasoning = header_output.grau_preocupacao_reasoning
     proximos_passos = header_output.proximos_passos
 
-    # --- Narrative bullets ---
-    def _bullets(section: CommitteeSection) -> str:
-        return "\n".join(f"- {b}" for b in section.bullets)
+    # --- Narrative bullets with footnote citations ---
+    fn_counter = 1
+    consolidado_bullets, fn_counter, fn_consolidado = _render_cited_bullets(consolidado.bullets, fn_counter)
+    holding_bullets,    fn_counter, fn_holding     = _render_cited_bullets(holding.bullets,    fn_counter)
+    perspectivas_bullets, fn_counter, fn_perspectivas = _render_cited_bullets(perspectivas.bullets, fn_counter)
 
-    consolidado_bullets = _bullets(consolidado)
-    holding_bullets = _bullets(holding)
-    perspectivas_bullets = _bullets(perspectivas)
+    all_footnotes = fn_consolidado + fn_holding + fn_perspectivas
 
     # Single "N/A — holding" bullet check
     holding_header_note = ""
-    if len(holding.bullets) == 1 and "single-entity" in holding.bullets[0].lower():
+    if (
+        len(holding.bullets) == 1
+        and ("não aplicável" in holding.bullets[0].text.lower()
+             or "single-entity" in holding.bullets[0].text.lower())
+    ):
         holding_header_note = " *(estrutura holding não aplicável)*"
 
     # --- Financial table ---
@@ -291,6 +323,15 @@ def compose_committee_template_pt(
         return f"| {row.indicator} | {row.realizado} | {row.projetado_cs} | {row.projetado_ct} |"
 
     table_rows = "\n".join(_trow(r) for r in financial_table)
+
+    # --- Fontes section ---
+    if all_footnotes:
+        fontes_lines = ["---", "", "**Fontes**", ""]
+        for n, src in all_footnotes:
+            fontes_lines.append(f"{_sup(n)} {src}")
+        fontes_block = "\n".join(fontes_lines) + "\n"
+    else:
+        fontes_block = ""
 
     return f"""\
 **{trade_name} | Resultados {period}**
@@ -332,7 +373,8 @@ def compose_committee_template_pt(
 
 Atenciosamente,
 **Equipe [Área]**
-"""
+
+{fontes_block}"""
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +409,8 @@ Rules:
     Projetado → Projected
     Indicador → Indicator
 - Keep [PREENCHER] placeholders exactly as-is (do not translate them).
+- Keep superscript digits (⁰¹²³⁴⁵⁶⁷⁸⁹) exactly as-is wherever they appear.
+- Translate the "Fontes" section header as "Sources".
 - Return only the translated Markdown — no commentary, no preamble.
 """
 

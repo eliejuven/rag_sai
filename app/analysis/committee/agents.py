@@ -13,6 +13,7 @@ import re
 
 from app.analysis.committee.schemas import (
     BankContext,
+    CitedBullet,
     CommitteeHeaderOutput,
     CommitteeSection,
 )
@@ -163,6 +164,22 @@ def _str_field(value: object, sep: str = " ") -> str:
     return str(value)
 
 
+def _parse_cited_bullets(raw: list, fallback: str = "[sem conteúdo]") -> list[CitedBullet]:
+    """Parse LLM bullets — accepts both {"text":..,"source":..} dicts and plain strings."""
+    if not raw:
+        return [CitedBullet(text=fallback)]
+    result = []
+    for item in raw:
+        if isinstance(item, dict):
+            result.append(CitedBullet(
+                text=_str_field(item.get("text", "")),
+                source=_str_field(item.get("source", "")),
+            ))
+        elif isinstance(item, str):
+            result.append(CitedBullet(text=item))
+    return result or [CitedBullet(text=fallback)]
+
+
 # ---------------------------------------------------------------------------
 # Agent 1 — Header
 # ---------------------------------------------------------------------------
@@ -277,6 +294,18 @@ async def run_header_agent(
 # Agent 2 — Highlights Consolidado
 # ---------------------------------------------------------------------------
 
+_CITATION_FORMAT = """\
+Source format for each bullet (use the most specific available):
+- Financial statement line: "Conta X.XX — [statement] — [período]"
+  e.g. "Conta 3.01 — DRE_con — FY 2024"
+- Disclosed non-GAAP metric: "Métrica divulgada — [label] — [período]"
+  e.g. "Métrica divulgada — EBITDA Ajustado — FY 2024"
+- FRE qualitative section: "FRE [section] — [section_label]"
+  e.g. "FRE 2.1 — Resultados Operacionais"
+- If you cannot identify a specific source, use an empty string "" — do NOT
+  invent a source.
+"""
+
 _CONSOLIDADO_SYSTEM = """\
 You are a senior credit analyst preparing the "Highlights Consolidado" section of an
 internal credit committee 1-pager for a Brazilian company.
@@ -294,12 +323,17 @@ percentage or ratio is not stated in the Dossier, describe the trend qualitative
 Focus on: revenue drivers (volume vs. price), EBITDA evolution, Capex, financial
 expenses and their impact, working capital, and year-end leverage.
 
+For each bullet, identify the specific source in the Dossier.
+""" + _CITATION_FORMAT + """
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 
 Respond with ONLY valid JSON:
 {
   "year_label": "2024",
-  "bullets": ["...", "...", "...", "...", "..."]
+  "bullets": [
+    {"text": "...", "source": "Conta 3.01 — DRE_con — FY 2024"},
+    {"text": "...", "source": "Métrica divulgada — EBITDA Ajustado — FY 2024"}
+  ]
 }
 """
 
@@ -331,14 +365,14 @@ async def run_consolidado_agent(dossier: CompanyDossier) -> CommitteeSection:
         return CommitteeSection(
             section_id="highlights_consolidado",
             year_label=year,
-            bullets=["[Erro ao gerar highlights consolidado]"],
+            bullets=[CitedBullet(text="[Erro ao gerar highlights consolidado]")],
         )
 
     data = _parse_json_safe(raw, "consolidado_agent")
     return CommitteeSection(
         section_id="highlights_consolidado",
         year_label=data.get("year_label", year),
-        bullets=data.get("bullets", ["[sem conteúdo]"]),
+        bullets=_parse_cited_bullets(data.get("bullets", []), fallback="[sem conteúdo]"),
     )
 
 
@@ -354,21 +388,31 @@ You receive the Company Dossier (balance sheet, FRE governance/ownership section
 
 """ + _GROUNDING_RULES + """
 Your task: write **3 to 4 bullet points** on the holding-company view — dividend upstream
-flows (dividends paid by subsidiaries to the holding), support provided to subsidiaries,
-intercompany dynamics, and holding-level leverage separate from the consolidated view.
-Only cite dividend amounts, intercompany balances, or leverage figures that are explicitly
-stated in the Dossier.  If the amount is not stated, describe the relationship qualitatively.
+flows (dividends received from subsidiaries, DFC account 6.02.05), support provided to
+subsidiaries, intercompany dynamics, and holding-level leverage separate from the
+consolidated view.  Only cite dividend amounts, intercompany balances, or leverage figures
+that are explicitly stated in the Dossier.  If the amount is not stated, describe the
+relationship qualitatively.
 
-IMPORTANT: if the company has a single legal entity with no holding structure, write
-exactly one bullet: "Não aplicável — empresa possui estrutura de entidade única, sem
-camada holding."
+CRITICAL — mutually exclusive logic:
+- If the Dossier contains ANY mention of subsidiaries, intercompany transactions, or
+  non-zero "Dividendos recebidos" (DFC 6.02.05), write the full 3–4 dividend/holding
+  bullets and do NOT include the "não aplicável" bullet.
+- Only write the single "não aplicável" bullet when the Dossier shows ZERO subsidiaries,
+  zero intercompany flows, and no DFC dividends received entries.
+- Never mix holding bullets with the "não aplicável" bullet — they contradict each other.
 
+For each bullet, identify the specific source in the Dossier.
+""" + _CITATION_FORMAT + """
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 
 Respond with ONLY valid JSON:
 {
   "year_label": "2024",
-  "bullets": ["...", "...", "..."]
+  "bullets": [
+    {"text": "...", "source": "Conta 6.02.05 — DFC_con — FY 2024"},
+    {"text": "...", "source": "FRE 1.2 — Grupo Econômico"}
+  ]
 }
 """
 
@@ -396,14 +440,14 @@ async def run_holding_agent(dossier: CompanyDossier) -> CommitteeSection:
         return CommitteeSection(
             section_id="highlights_holding",
             year_label=year,
-            bullets=["[Erro ao gerar highlights holding]"],
+            bullets=[CitedBullet(text="[Erro ao gerar highlights holding]")],
         )
 
     data = _parse_json_safe(raw, "holding_agent")
     return CommitteeSection(
         section_id="highlights_holding",
         year_label=data.get("year_label", year),
-        bullets=data.get("bullets", ["[sem conteúdo]"]),
+        bullets=_parse_cited_bullets(data.get("bullets", []), fallback="[sem conteúdo]"),
     )
 
 
@@ -430,15 +474,19 @@ Strict rules:
 - Macro / sector context (from Yahoo Finance market data or BCB data) may be used to
   describe tailwinds/headwinds qualitatively, but do not attribute specific macro numbers
   (GDP growth %, Selic rate) to the company's own projections.
-- Quote management language verbatim when the FRE uses it (e.g. "a companhia planeja
-  reduzir a alavancagem para abaixo de 2x até 2026" is a direct quote — use it).
+- Quote management language verbatim when the FRE uses it.
 
+For each bullet, identify the specific source in the Dossier.
+""" + _CITATION_FORMAT + """
 Write in **Portuguese**.  Keep the company's own disclosed metric labels verbatim.
 
 Respond with ONLY valid JSON:
 {
   "year_label": "2025",
-  "bullets": ["...", "...", "..."]
+  "bullets": [
+    {"text": "...", "source": "FRE 3.1 — Plano de Negócios"},
+    {"text": "...", "source": "FRE 4.1 — Fatores de Risco"}
+  ]
 }
 """
 
@@ -474,12 +522,12 @@ async def run_perspectivas_agent(dossier: CompanyDossier, market_ctx: str) -> Co
         return CommitteeSection(
             section_id="perspectivas",
             year_label=next_year,
-            bullets=["[Erro ao gerar perspectivas]"],
+            bullets=[CitedBullet(text="[Erro ao gerar perspectivas]")],
         )
 
     data = _parse_json_safe(raw, "perspectivas_agent")
     return CommitteeSection(
         section_id="perspectivas",
         year_label=data.get("year_label", next_year),
-        bullets=data.get("bullets", ["[sem conteúdo]"]),
+        bullets=_parse_cited_bullets(data.get("bullets", []), fallback="[sem conteúdo]"),
     )

@@ -10,6 +10,7 @@ from datetime import datetime
 
 from app.analysis.committee.schemas import (
     BankContext,
+    CitedBullet,
     CommitteeHeaderOutput,
     CommitteeSection,
     CommitteeReport,
@@ -169,8 +170,14 @@ def _hard_coded_section(section_id: str, year: str = "2024") -> CommitteeSection
         section_id=section_id,
         year_label=year,
         bullets=[
-            "Receita cresceu 11% a/a, impulsionada por volume de minério de ferro.",
-            "EBITDA ajustado atingiu R$ 12.500 MM com margem de 25%.",
+            CitedBullet(
+                text="Receita cresceu no período, impulsionada por volume de minério de ferro.",
+                source="Conta 3.01 — DRE_con — FY 2024",
+            ),
+            CitedBullet(
+                text="EBITDA ajustado atingiu R$ 12.500 MM com margem de 25%.",
+                source="Métrica divulgada — EBITDA Ajustado — FY 2024",
+            ),
         ],
     )
 

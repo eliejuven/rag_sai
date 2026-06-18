@@ -11,15 +11,41 @@ from typing import Optional
 
 from app.analysis.committee.schemas import (
     BankContext,
+    CitedBullet,
     CommitteeHeaderOutput,
     CommitteeSection,
     CommitteeReport,
     FinancialTableRow,
 )
-from app.analysis.schemas import CompanyDossier, DisclosedMetric, FinancialLineItem
+from app.analysis.schemas import CompanyDossier, DisclosedMetric, ExtractedKPI, FinancialLineItem
 from app.generation.llm import chat_completion
 
 _FILL = "[PREENCHER]"
+
+def _sup(n: int) -> str:
+    """Convert integer to ASCII superscript notation: 12 → (12)
+    Unicode superscripts ⁴⁵⁶⁷⁸⁹ don't render in most PDF fonts — use (N) instead."""
+    return f"({n})"
+
+
+def _render_cited_bullets(
+    bullets: list[CitedBullet],
+    counter: int,
+) -> tuple[str, int, list[tuple[int, str]]]:
+    """Render bullets with superscript footnote numbers where a source exists.
+
+    Returns (markdown_block, next_counter, [(n, source), ...])
+    """
+    lines = []
+    footnotes: list[tuple[int, str]] = []
+    for b in bullets:
+        if b.source and b.source.strip():
+            lines.append(f"- {b.text}{_sup(counter)}")
+            footnotes.append((counter, b.source))
+            counter += 1
+        else:
+            lines.append(f"- {b.text}")
+    return "\n".join(lines), counter, footnotes
 
 
 # ---------------------------------------------------------------------------
@@ -27,17 +53,24 @@ _FILL = "[PREENCHER]"
 # ---------------------------------------------------------------------------
 
 
-def _fmt_mm(value: float, scale: str) -> str:
-    """Convert a financial line-item value to R$ MM string."""
-    scale = scale.upper()
-    if scale in ("MIL", "THOUSANDS", "R$ MIL", "R$ MILHARES"):
-        mm = value / 1_000
-    elif scale in ("UNIDADE", "UNIT", "UNITS", "R$"):
-        mm = value / 1_000_000
-    else:
-        # assume already MM
-        mm = value
-    return f"{mm:,.1f}"
+def _kpi_to_mm(kpi: ExtractedKPI) -> float:
+    """Normalize an ExtractedKPI value to R$ MM using its unit field."""
+    unit = (kpi.unit or "").lower()
+    if "bilh" in unit:
+        return kpi.value * 1_000
+    if "mil" in unit and "milhão" not in unit and "milhões" not in unit:
+        return kpi.value / 1_000
+    return kpi.value
+
+
+def _fmt_mm(value: float, scale: str = "") -> str:
+    """Convert a financial line-item value to R$ MM string.
+
+    cvm_client pre-multiplies every value by its ESCALA_MOEDA factor before
+    storing, so FinancialLineItem.value is always in raw R$ regardless of the
+    original scale label.  Converting to MM therefore always divides by 1 000 000.
+    """
+    return f"{value / 1_000_000:,.1f}"
 
 
 def _fmt_pct(value: float) -> str:
@@ -55,6 +88,10 @@ def _period_sort_key(label: str) -> tuple:
     m = re.match(r"(\d+)M (\d{4})", label)
     if m:
         return (int(m.group(2)), int(m.group(1)))
+    # Handle "DD.MM.YYYY" dates (e.g. "31.12.2024")
+    m = re.search(r"(\d{4})$", label)
+    if m:
+        return (int(m.group(1)), 0)
     return (0, 0)
 
 
@@ -63,6 +100,7 @@ def _latest_line_item(
     *,
     account_code: str,
     statement_type: str,
+    prefer_fy: bool = False,
 ) -> Optional[FinancialLineItem]:
     candidates = [
         li for li in items
@@ -70,6 +108,10 @@ def _latest_line_item(
     ]
     if not candidates:
         return None
+    if prefer_fy:
+        fy_only = [li for li in candidates if li.period_label.startswith("FY ")]
+        if fy_only:
+            return max(fy_only, key=lambda li: _period_sort_key(li.period_label))
     return max(candidates, key=lambda li: _period_sort_key(li.period_label))
 
 
@@ -113,62 +155,96 @@ def _build_financial_table(
     items = dossier.financial_line_items
     metrics = dossier.disclosed_metrics
 
-    # --- Faturamento: DRE account 3.01 ---
-    fat_item = _latest_line_item(items, account_code="3.01", statement_type="DRE_con")
+    # --- Faturamento: DRE account 3.01 (prefer full-year period over ITR quarters) ---
+    fat_item = _latest_line_item(items, account_code="3.01", statement_type="DRE_con", prefer_fy=True)
     if fat_item:
         fat_val = _fmt_mm(fat_item.value, fat_item.scale)
-        fat_num: float | None = fat_item.value / 1_000 if fat_item.scale.upper() in (
-            "MIL", "THOUSANDS", "R$ MIL", "R$ MILHARES"
-        ) else fat_item.value
+        fat_num: float | None = fat_item.value / 1_000_000  # value is raw R$; MM = /1 000 000
     else:
         fat_val = "—"
         fat_num = None
 
-    # --- EBITDA: disclosed metric ---
-    ebitda_m = _latest_metric(metrics, "EBITDA") or _latest_metric(metrics, "LAJIDA")
-    if ebitda_m and ebitda_m.value is not None:
-        ebitda_num = ebitda_m.value
-        # if unit says % or the value looks like a ratio, skip
-        if ebitda_m.unit and "%" in ebitda_m.unit:
+    # Derive the DFP fiscal year (e.g. 2025) for period-mismatch detection below
+    _dfp_year: str | None = None
+    if fat_item:
+        _m = re.search(r"\d{4}", fat_item.period_label)
+        if _m:
+            _dfp_year = _m.group()
+
+    def _period_note(kpi_period: str | None) -> str:
+        """Return '(FY YYYY)' when the KPI period year differs from the DFP year."""
+        if not kpi_period or not _dfp_year:
+            return ""
+        _pm = re.search(r"\d{4}", str(kpi_period))
+        if _pm and _pm.group() != _dfp_year:
+            return f" (FY {_pm.group()})"
+        return ""
+
+    ekpis = dossier.extracted_kpis
+
+    # --- EBITDA: extracted_kpis first, keyword fallback ---
+    if ekpis and ekpis.ebitda:
+        ebitda_num = _kpi_to_mm(ekpis.ebitda)
+        ebitda_val = f"{ebitda_num:,.1f}{_period_note(ekpis.ebitda.period)}"
+    else:
+        ebitda_m = _latest_metric(metrics, "EBITDA") or _latest_metric(metrics, "LAJIDA")
+        if ebitda_m and ebitda_m.value is not None and not (ebitda_m.unit and "%" in ebitda_m.unit):
+            ebitda_num = ebitda_m.value
+            ebitda_val = f"{ebitda_num:,.1f}"
+        else:
             ebitda_val = "—"
             ebitda_num = None
+
+    # --- Margem EBITDA: extracted_kpis first, keyword fallback, then computed ---
+    if ekpis and ekpis.ebitda_margin:
+        margem_val = _fmt_pct(ekpis.ebitda_margin.value) + _period_note(ekpis.ebitda_margin.period)
+    else:
+        margem_m = (
+            _latest_metric(metrics, "Margem", "EBITDA")
+            or _latest_metric(metrics, "Margem", "LAJIDA")
+        )
+        if margem_m and margem_m.value is not None:
+            margem_val = _fmt_pct(margem_m.value)
+        elif ebitda_num is not None and fat_num and fat_num != 0:
+            margem_val = _fmt_pct((ebitda_num / fat_num) * 100)
         else:
-            # convert to MM if unit says milhões/MM already, else treat as is
-            if ebitda_m.unit and ("milhão" in ebitda_m.unit.lower() or "milhões" in ebitda_m.unit.lower() or "mm" in ebitda_m.unit.lower()):
-                ebitda_val = f"{ebitda_num:,.1f}"
-            else:
-                ebitda_val = f"{ebitda_num:,.1f}"
+            margem_val = "—"
+
+    # --- Dívida Líquida: extracted_kpis first, keyword fallback ---
+    if ekpis and ekpis.net_debt:
+        dl_val = f"{_kpi_to_mm(ekpis.net_debt):,.1f}{_period_note(ekpis.net_debt.period)}"
     else:
-        ebitda_val = "—"
-        ebitda_num = None
+        dl_m = (
+            _latest_metric(metrics, "Dívida Líquida", exclude_keywords=["ebitda"])
+            or _latest_metric(metrics, "Divida Liquida", exclude_keywords=["ebitda"])
+            or _latest_metric(metrics, "Net Debt", exclude_keywords=["ebitda"])
+        )
+        dl_val = f"{dl_m.value:,.1f}" if dl_m and dl_m.value is not None else "—"
 
-    # --- Margem EBITDA ---
-    margem_m = (
-        _latest_metric(metrics, "Margem", "EBITDA")
-        or _latest_metric(metrics, "Margem", "LAJIDA")
-    )
-    if margem_m and margem_m.value is not None:
-        margem_val = _fmt_pct(margem_m.value)
-    elif ebitda_num is not None and fat_num and fat_num != 0:
-        margem_val = _fmt_pct((ebitda_num / fat_num) * 100)
+    # --- Alavancagem: extracted_kpis first, keyword fallback ---
+    if ekpis and ekpis.leverage:
+        alav_val = _fmt_x(ekpis.leverage.value) + _period_note(ekpis.leverage.period)
     else:
-        margem_val = "—"
+        alav_m = (
+            _latest_metric(metrics, "Alavancagem")
+            or _latest_metric(metrics, "Leverage")
+            or _latest_metric(metrics, "DL/EBITDA")
+            or _latest_metric(metrics, "Dívida Líquida/EBITDA")
+            or _latest_metric(metrics, "Divida Liquida/EBITDA")
+        )
+        alav_val = _fmt_x(alav_m.value) if alav_m and alav_m.value is not None else "—"
 
-    # --- Dívida Líquida ---
-    dl_m = (
-        _latest_metric(metrics, "Dívida Líquida")
-        or _latest_metric(metrics, "Divida Liquida")
-        or _latest_metric(metrics, "Net Debt")
-    )
-    dl_val = f"{dl_m.value:,.1f}" if dl_m and dl_m.value is not None else "—"
+    # --- Net Income: account 3.11, DRE_con (Tier 1 — always available) ---
+    ni_item = _latest_line_item(items, account_code="3.11", statement_type="DRE_con", prefer_fy=True)
+    ni_val = _fmt_mm(ni_item.value) if ni_item else "—"
 
-    # --- Alavancagem ---
-    alav_m = (
-        _latest_metric(metrics, "Alavancagem")
-        or _latest_metric(metrics, "Leverage")
-        or _latest_metric(metrics, "DL/EBITDA")
+    # --- Operating Cash Flow: account 6.01, DFC_con (Tier 1 — usually available) ---
+    ocf_item = (
+        _latest_line_item(items, account_code="6.01", statement_type="DFC_MD_con", prefer_fy=True)
+        or _latest_line_item(items, account_code="6.01", statement_type="DFC_MI_con", prefer_fy=True)
     )
-    alav_val = _fmt_x(alav_m.value) if alav_m and alav_m.value is not None else "—"
+
+    ocf_val = _fmt_mm(ocf_item.value) if ocf_item else "—"
 
     def _cs(key: str) -> str:
         return _proj_val(bank_context, key, "cs")
@@ -197,6 +273,20 @@ def _build_financial_table(
             realizado=margem_val,
             projetado_cs=_cs("margem_ebitda"),
             projetado_ct=_ct("margem_ebitda"),
+        ),
+        FinancialTableRow(
+            indicator="Lucro Líquido (R$ MM)",
+            indicator_en="Net Income (R$ MM)",
+            realizado=ni_val,
+            projetado_cs=_cs("lucro_liquido"),
+            projetado_ct=_ct("lucro_liquido"),
+        ),
+        FinancialTableRow(
+            indicator="Caixa Operacional (R$ MM)",
+            indicator_en="Operating Cash Flow (R$ MM)",
+            realizado=ocf_val,
+            projetado_cs=_cs("caixa_operacional"),
+            projetado_ct=_ct("caixa_operacional"),
         ),
         FinancialTableRow(
             indicator="Dívida Líquida (R$ MM)",
@@ -270,17 +360,21 @@ def compose_committee_template_pt(
     grau_reasoning = header_output.grau_preocupacao_reasoning
     proximos_passos = header_output.proximos_passos
 
-    # --- Narrative bullets ---
-    def _bullets(section: CommitteeSection) -> str:
-        return "\n".join(f"- {b}" for b in section.bullets)
+    # --- Narrative bullets with footnote citations ---
+    fn_counter = 1
+    consolidado_bullets, fn_counter, fn_consolidado = _render_cited_bullets(consolidado.bullets, fn_counter)
+    holding_bullets,    fn_counter, fn_holding     = _render_cited_bullets(holding.bullets,    fn_counter)
+    perspectivas_bullets, fn_counter, fn_perspectivas = _render_cited_bullets(perspectivas.bullets, fn_counter)
 
-    consolidado_bullets = _bullets(consolidado)
-    holding_bullets = _bullets(holding)
-    perspectivas_bullets = _bullets(perspectivas)
+    all_footnotes = fn_consolidado + fn_holding + fn_perspectivas
 
     # Single "N/A — holding" bullet check
     holding_header_note = ""
-    if len(holding.bullets) == 1 and "single-entity" in holding.bullets[0].lower():
+    if (
+        len(holding.bullets) == 1
+        and ("não aplicável" in holding.bullets[0].text.lower()
+             or "single-entity" in holding.bullets[0].text.lower())
+    ):
         holding_header_note = " *(estrutura holding não aplicável)*"
 
     # --- Financial table ---
@@ -291,6 +385,15 @@ def compose_committee_template_pt(
         return f"| {row.indicator} | {row.realizado} | {row.projetado_cs} | {row.projetado_ct} |"
 
     table_rows = "\n".join(_trow(r) for r in financial_table)
+
+    # --- Fontes section ---
+    if all_footnotes:
+        fontes_lines = ["---", "", "**Fontes**", ""]
+        for n, src in all_footnotes:
+            fontes_lines.append(f"{_sup(n)} {src}")
+        fontes_block = "\n".join(fontes_lines) + "\n"
+    else:
+        fontes_block = ""
 
     return f"""\
 **{trade_name} | Resultados {period}**
@@ -332,7 +435,8 @@ def compose_committee_template_pt(
 
 Atenciosamente,
 **Equipe [Área]**
-"""
+
+{fontes_block}"""
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +471,8 @@ Rules:
     Projetado → Projected
     Indicador → Indicator
 - Keep [PREENCHER] placeholders exactly as-is (do not translate them).
+- Keep footnote markers like (1), (2), (3)... exactly as-is wherever they appear.
+- Translate the "Fontes" section header as "Sources".
 - Return only the translated Markdown — no commentary, no preamble.
 """
 

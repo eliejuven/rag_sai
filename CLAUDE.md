@@ -13,14 +13,22 @@ echo "MISTRAL_API_KEY=your_key" > .env
 # Run server
 python3 -m uvicorn app.main:app --reload --port 8001
 
-# Run individual test scripts (no test framework — each is a standalone async script)
-python3 test_pipeline.py
-python3 test_registry.py
-python3 test_cvm_client.py
-python3 test_company_extractor.py
-python3 test_persistence.py
-python3 test_market_data.py
-python3 test_bcb_client.py
+# Run tests — all scripts are standalone (no test framework).
+# Run from the repo root using python3 -m so that the app package is on sys.path.
+
+# Synthetic / pure-Python (no API keys needed, runs instantly):
+python3 -m tests.test_committee_agents
+python3 -m tests.test_playbooks
+python3 -m tests.test_sections_parsing
+
+# Integration (require live APIs or downloaded CVM data):
+python3 -m tests.test_pipeline
+python3 -m tests.test_registry
+python3 -m tests.test_cvm_client
+python3 -m tests.test_company_extractor
+python3 -m tests.test_persistence
+python3 -m tests.test_market_data
+python3 -m tests.test_bcb_client
 ```
 
 The app is available at `http://localhost:8001`. Swagger UI at `/docs`.

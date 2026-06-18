@@ -19,12 +19,15 @@ from app.analysis.committee.agents import (
     run_holding_agent,
     run_perspectivas_agent,
 )
+from app.analysis.extraction import extract_financial_kpis
+from app.analysis.committee.fact_sheet import build_fact_sheet
+from app.analysis.committee.verifier import cross_check
 from app.analysis.committee.composer import (
     compose_committee_template_pt,
     translate_to_en,
 )
 from app.analysis.committee.schemas import BankContext, CommitteeReport
-from app.analysis.dossier_builder import build_dossier
+from app.analysis.dossier_builder import build_dossier, _persist_dossier
 from app.analysis.schemas import CompanyDossier
 from app.scraper.market_data import fetch_market_data, format_market_context, resolve_ticker
 from app.scraper.pipeline import scrape_and_ingest
@@ -181,9 +184,31 @@ async def generate_committee_report(
         f"{len(dossier.qualitative_facts)} qualitative facts.",
     )
 
+    # Step 2b — LLM KPI extraction (runs once per dossier, cached in JSON)
+    if dossier.extracted_kpis is None:
+        await _emit("progress", "Extracting key financial metrics from dossier...")
+        kpis = await extract_financial_kpis(dossier)
+        dossier = dossier.model_copy(update={"extracted_kpis": kpis})
+        _persist_dossier(cnpj, dossier)
+        logger.info(
+            "KPI extraction done — EBITDA: %s, Net Debt: %s, Leverage: %s",
+            kpis.ebitda and kpis.ebitda.value,
+            kpis.net_debt and kpis.net_debt.value,
+            kpis.leverage and kpis.leverage.value,
+        )
+
     # Step 3 — Yahoo market data (best-effort)
     await _emit("progress", "Fetching market data...")
     market_ctx = await _fetch_market_context(display_name)
+
+    # Step 3b — Pre-compute FactSheet (deterministic, no LLM)
+    fact_sheet = build_fact_sheet(dossier)
+    logger.info(
+        "FactSheet: revenue %s MM (YoY %s%%), leverage %s",
+        fact_sheet.revenue_latest_mm,
+        fact_sheet.revenue_yoy_pct,
+        fact_sheet.leverage_latest_x,
+    )
 
     # Step 4 — load + merge BankContext
     bank_context = load_bank_context(cnpj)
@@ -194,12 +219,12 @@ async def generate_committee_report(
 
     # Step 5 — Header agent
     await _emit("progress", "Generating header & credit opinion...")
-    header_output = await run_header_agent(dossier, market_ctx, bank_context)
+    header_output = await run_header_agent(dossier, market_ctx, bank_context, fact_sheet)
     await asyncio.sleep(_INTER_AGENT_DELAY)
 
     # Step 6 — Highlights Consolidado
     await _emit("progress", "Generating highlights — consolidated...")
-    consolidado = await run_consolidado_agent(dossier)
+    consolidado = await run_consolidado_agent(dossier, fact_sheet)
     await asyncio.sleep(_INTER_AGENT_DELAY)
 
     # Step 7 — Highlights Holding
@@ -222,6 +247,16 @@ async def generate_committee_report(
     report_pt = compose_committee_template_pt(
         dossier, header_output, consolidado, holding, perspectivas, financial_table, bank_context
     )
+
+    # Step 10b — Cross-check numbers in PT markdown against dossier (Phase D)
+    verification = cross_check(report_pt, fact_sheet, dossier)
+    logger.info(
+        "Number verification: %d verified, %d unverified",
+        verification.verified,
+        len(verification.unverified),
+    )
+    if verification.warning:
+        await _emit("progress", verification.warning)
 
     # Step 11 — Translate to English
     await _emit("progress", "Translating to English...")

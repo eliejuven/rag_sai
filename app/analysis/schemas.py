@@ -65,6 +65,28 @@ class DossierCoverage(BaseModel):
     fre_sections_missing: list[str]
 
 
+class ExtractedKPI(BaseModel):
+    """One concept-normalized KPI extracted by LLM from dossier data."""
+    value: float
+    unit: str | None = None       # as stated in the source: "R$ milhões", "%", "x", etc.
+    label: str                    # verbatim label from the document
+    period: str | None = None     # e.g. "FY 2025", "31.12.2024"
+
+
+class ExtractedKPIs(BaseModel):
+    """
+    Concept-normalized KPIs for the 1-pager financial table.
+
+    Produced once by extract_financial_kpis() and cached in the dossier JSON.
+    Values are stored AS DISCLOSED — unit field describes the scale.
+    Callers must normalize to R$ MM using the unit field.
+    """
+    ebitda: ExtractedKPI | None = None
+    ebitda_margin: ExtractedKPI | None = None
+    net_debt: ExtractedKPI | None = None
+    leverage: ExtractedKPI | None = None
+
+
 class CompanyDossier(BaseModel):
     cnpj: str
     cd_cvm: str
@@ -77,6 +99,7 @@ class CompanyDossier(BaseModel):
     qualitative_facts: list[QualitativeFact]
     conflicts: list[FactConflict]
     coverage: DossierCoverage
+    extracted_kpis: ExtractedKPIs | None = None  # populated by extract_financial_kpis()
 
 
 class TaggedStatement(BaseModel):

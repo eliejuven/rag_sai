@@ -148,12 +148,12 @@ async def scrape_and_ingest(
     metadata = _load_metadata()
     cnpj = company["cnpj"]
 
-    # FRE year: the most recent complete annual filing
-    # (current_year - 1, since the current year's FRE may not be filed yet)
     from datetime import date as _date
-    fre_year = _date.today().year - 1
+    # Staleness check uses prior year FRE (always available, stable).
+    # Actual download below tries current year first (may have more recent data).
+    fre_year_check = _date.today().year - 1
 
-    if not _is_stale(metadata, cnpj, requested_year=requested_year, fre_year=fre_year):
+    if not _is_stale(metadata, cnpj, requested_year=requested_year, fre_year=fre_year_check):
         last = metadata[cnpj]["last_scraped"][:10]
         await emit(
             f"Data for {display_name} is already indexed and up to date "
@@ -203,26 +203,40 @@ async def scrape_and_ingest(
 
     # ------------------------------------------------------------------
     # Step 3b — Fetch FRE qualitative sections
-    # This runs alongside DFP/ITR. Failure is non-fatal: if the FRE
-    # cannot be downloaded (network error, company hasn't filed yet),
-    # we log a warning and continue with just the structured data.
+    # Try the current year first (filed in current_year, covers FY current_year-1
+    # results — the most recent available). Fall back to prior year if the
+    # current year hasn't been filed yet. Failure is non-fatal.
     # ------------------------------------------------------------------
-    await emit(f"  → Reference Form (FRE) {fre_year} (qualitative sections)...")
+    fre_year_latest = current_year      # e.g. 2026 — filed in 2026, covers FY 2025
+    fre_year_stable = current_year - 1  # e.g. 2025 — filed in 2025, covers FY 2024
 
     fre_pages = []
-    try:
-        fre_pages, fre_skip_reason = fetch_fre_sections(
-            cnpj=cnpj,
-            company_name=display_name,
-            year=fre_year,
-        )
-        if fre_pages:
-            await emit(f"  → {len(fre_pages)} FRE sections extracted.")
-        else:
-            await emit(f"  → WARNING: FRE {fre_year} not available for {display_name}. {fre_skip_reason}")
-    except Exception as e:
-        logger.warning("FRE scraping failed for %s (non-fatal): %s", display_name, e)
-        await emit(f"  → WARNING: FRE unavailable for {display_name} ({e}). Continuing with structured data only.")
+    fre_year = fre_year_stable  # will be updated below if current year succeeds
+
+    for _fre_try in [fre_year_latest, fre_year_stable]:
+        await emit(f"  → Reference Form (FRE) {_fre_try} (qualitative sections)...")
+        try:
+            _pages, fre_skip_reason = fetch_fre_sections(
+                cnpj=cnpj,
+                company_name=display_name,
+                year=_fre_try,
+            )
+            if _pages:
+                fre_pages = _pages
+                fre_year = _fre_try
+                await emit(f"  → {len(fre_pages)} FRE sections extracted (FRE {fre_year}).")
+                break
+            else:
+                if _fre_try == fre_year_latest:
+                    await emit(f"  → FRE {_fre_try} not yet available. Trying {fre_year_stable}...")
+                else:
+                    await emit(f"  → WARNING: FRE {_fre_try} not available for {display_name}. {fre_skip_reason}")
+        except Exception as e:
+            logger.warning("FRE %d scraping failed for %s (non-fatal): %s", _fre_try, display_name, e)
+            if _fre_try == fre_year_latest:
+                await emit(f"  → FRE {_fre_try} unavailable ({e}). Trying {fre_year_stable}...")
+            else:
+                await emit(f"  → WARNING: FRE unavailable for {display_name} ({e}). Continuing with structured data only.")
 
     # ------------------------------------------------------------------
     # Step 4 — Chunk

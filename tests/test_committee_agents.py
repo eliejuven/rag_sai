@@ -66,7 +66,8 @@ def _make_dossier(
             FinancialLineItem(
                 account_code="3.01",
                 description="Receita de Venda de Bens e/ou Serviços",
-                value=50_000.0,  # 50,000 MIL = 50 MM
+                # cvm_client stores raw R$ (MIL × 1 000): 50 MM = 50 000 000 raw R$
+                value=50_000_000.0,
                 scale="MIL",
                 period_label="FY 2024",
                 statement_type="DRE_con",
@@ -78,7 +79,7 @@ def _make_dossier(
             FinancialLineItem(
                 account_code="3.01",
                 description="Receita de Venda de Bens e/ou Serviços",
-                value=45_000.0,
+                value=45_000_000.0,  # 45 MM = 45 000 000 raw R$
                 scale="MIL",
                 period_label="FY 2023",
                 statement_type="DRE_con",
@@ -192,14 +193,16 @@ def test_financial_table_structure():
     bank_ctx = BankContext()
     table = _build_financial_table(dossier, bank_ctx)
 
-    check("returns 5 rows", len(table) == 5, f"got {len(table)}")
+    check("returns 7 rows", len(table) == 7, f"got {len(table)}")
 
     indicators = [r.indicator for r in table]
     check("row 0 is Faturamento", "Faturamento" in indicators[0])
     check("row 1 is EBITDA", "EBITDA" in indicators[1])
     check("row 2 is Margem EBITDA", "Margem" in indicators[2])
-    check("row 3 is Dívida Líquida", "Dívida" in indicators[3])
-    check("row 4 is Alavancagem", "Alavancagem" in indicators[4])
+    check("row 3 is Lucro Líquido", "Lucro" in indicators[3])
+    check("row 4 is Caixa Operacional", "Caixa" in indicators[4])
+    check("row 5 is Dívida Líquida", "Dívida" in indicators[5])
+    check("row 6 is Alavancagem", "Alavancagem" in indicators[6])
 
     fat_row = table[0]
     check("Faturamento realizado not '—'", fat_row.realizado != "—", fat_row.realizado)
@@ -212,10 +215,10 @@ def test_financial_table_structure():
     margem_row = table[2]
     check("Margem realizado has '%'", "%" in margem_row.realizado or margem_row.realizado != "—")
 
-    dl_row = table[3]
+    dl_row = table[5]
     check("DL realizado not '—'", dl_row.realizado != "—", dl_row.realizado)
 
-    alav_row = table[4]
+    alav_row = table[6]
     check("Alavancagem realizado has 'x'", "x" in alav_row.realizado, alav_row.realizado)
 
     # All projetado fields should be [PREENCHER] when BankContext is empty
@@ -229,7 +232,7 @@ def test_financial_table_missing_data():
     dossier = _make_dossier(with_3_01=False, with_ebitda=False, with_margem=False, with_dl=False, with_alav=False)
     bank_ctx = BankContext()
     table = _build_financial_table(dossier, bank_ctx)
-    check("still 5 rows when all data missing", len(table) == 5)
+    check("still 7 rows when all data missing", len(table) == 7)
     for row in table:
         check(f"{row.indicator}: realizado is '—' when missing", row.realizado == "—")
 
@@ -353,8 +356,156 @@ def test_schema_roundtrip():
 
     check("cnpj survives round-trip", restored.cnpj == report.cnpj)
     check("bank_context.limite_mm survives", restored.bank_context.limite_mm == 500.0)
-    check("financial_table length survives", len(restored.financial_table) == 5)
+    check("financial_table length survives", len(restored.financial_table) == 7)
     check("grau_preocupacao survives", restored.header_output.grau_preocupacao == "Médio")
+
+
+# ---------------------------------------------------------------------------
+# Test: build_fact_sheet
+# ---------------------------------------------------------------------------
+
+
+def test_build_fact_sheet():
+    from app.analysis.committee.fact_sheet import build_fact_sheet, format_fact_sheet
+
+    print("\n--- build_fact_sheet: full dossier ---")
+    dossier = _make_dossier()
+    fs = build_fact_sheet(dossier)
+
+    # Periods
+    check("period_latest is FY 2024", fs.period_latest == "FY 2024", fs.period_latest)
+    check("period_prior is FY 2023", fs.period_prior == "FY 2023", fs.period_prior)
+
+    # Revenue: 50,000 MIL → 50 MM; 45,000 MIL → 45 MM
+    # 50 000 000 raw R$ / 1 000 000 = 50 MM; 45 000 000 / 1 000 000 = 45 MM
+    check("revenue_latest_mm == 50.0", fs.revenue_latest_mm == 50.0, str(fs.revenue_latest_mm))
+    check("revenue_prior_mm == 45.0", fs.revenue_prior_mm == 45.0, str(fs.revenue_prior_mm))
+    check("revenue_yoy_abs_mm == 5.0", fs.revenue_yoy_abs_mm == 5.0, str(fs.revenue_yoy_abs_mm))
+    # 5/45*100 = 11.111...% → rounded to 11.1
+    check(
+        "revenue_yoy_pct ≈ 11.1%",
+        fs.revenue_yoy_pct is not None and abs(fs.revenue_yoy_pct - 11.1) < 0.05,
+        str(fs.revenue_yoy_pct),
+    )
+
+    # EBITDA: 12,500 (R$ milhões) — already in MM
+    check("ebitda_latest_mm == 12500.0", fs.ebitda_latest_mm == 12_500.0, str(fs.ebitda_latest_mm))
+    check("ebitda_period_latest is FY 2024", fs.ebitda_period_latest == "FY 2024", str(fs.ebitda_period_latest))
+
+    # Margin: 25% stated
+    check("ebitda_margin_latest_pct == 25.0", fs.ebitda_margin_latest_pct == 25.0, str(fs.ebitda_margin_latest_pct))
+
+    # Net debt: 30,000 MM
+    check("net_debt_latest_mm == 30000.0", fs.net_debt_latest_mm == 30_000.0, str(fs.net_debt_latest_mm))
+
+    # Leverage: 2.4x (from "Alavancagem (DL/EBITDA)" label contains "DL/EBITDA")
+    check("leverage_latest_x == 2.4", fs.leverage_latest_x == 2.4, str(fs.leverage_latest_x))
+    check("leverage_label is set", fs.leverage_label is not None, str(fs.leverage_label))
+
+    # format_fact_sheet produces a usable string
+    formatted = format_fact_sheet(fs)
+    check("formatted contains period", "FY 2024" in formatted)
+    check("formatted contains revenue", "50.0" in formatted)
+    check("formatted contains yoy pct", "11.1%" in formatted)
+    check("formatted contains stated ratio warning", "stated" in formatted.lower())
+
+    print("\n--- build_fact_sheet: empty dossier ---")
+    dossier_empty = _make_dossier(
+        with_3_01=False, with_ebitda=False, with_margem=False, with_dl=False, with_alav=False
+    )
+    fs_empty = build_fact_sheet(dossier_empty)
+    check("period_latest is N/A when no items", fs_empty.period_latest == "N/A", fs_empty.period_latest)
+    check("revenue_latest_mm is None", fs_empty.revenue_latest_mm is None)
+    check("revenue_yoy_pct is None", fs_empty.revenue_yoy_pct is None)
+    check("leverage_latest_x is None", fs_empty.leverage_latest_x is None)
+
+    print("\n--- build_fact_sheet: only latest year (no prior → no YoY) ---")
+    from datetime import datetime
+    from app.analysis.schemas import (
+        Citation, DossierCoverage, FinancialLineItem, CompanyDossier
+    )
+
+    def _cite_local() -> Citation:
+        return Citation(document_id="test", filename="test.csv", section=None)
+
+    single_year_dossier = CompanyDossier(
+        cnpj="00.000.000/0001-00",
+        cd_cvm="0000",
+        name="TEST S.A.",
+        trade_name="Test",
+        sector="Test",
+        generated_at=datetime.now(),
+        financial_line_items=[
+            FinancialLineItem(
+                account_code="3.01",
+                description="Receita",
+                value=100_000_000.0,  # 100 MM = 100 000 000 raw R$
+                scale="MIL",
+                period_label="FY 2024",
+                statement_type="DRE_con",
+                citation=_cite_local(),
+            )
+        ],
+        disclosed_metrics=[],
+        qualitative_facts=[],
+        conflicts=[],
+        coverage=DossierCoverage(
+            dfp_years=[2024], itr_years=[], fre_years=[],
+            fre_sections_present=[], fre_sections_missing=[],
+        ),
+    )
+    fs_single = build_fact_sheet(single_year_dossier)
+    check("period_latest is FY 2024", fs_single.period_latest == "FY 2024")
+    check("period_prior is None (only one FY)", fs_single.period_prior is None)
+    check("revenue_yoy_abs_mm is None (no prior)", fs_single.revenue_yoy_abs_mm is None)
+    check("revenue_yoy_pct is None (no prior)", fs_single.revenue_yoy_pct is None)
+    # 100 000 000 raw R$ / 1 000 000 = 100 MM
+    check("revenue_latest_mm == 100.0", fs_single.revenue_latest_mm == 100.0, str(fs_single.revenue_latest_mm))
+
+
+# ---------------------------------------------------------------------------
+# Test: cross_check
+# ---------------------------------------------------------------------------
+
+
+def test_cross_check():
+    from app.analysis.committee.fact_sheet import build_fact_sheet
+    from app.analysis.committee.verifier import cross_check
+
+    dossier = _make_dossier()
+    fs = build_fact_sheet(dossier)
+
+    print("\n--- cross_check: all numbers from dossier ---")
+    # Revenue=50 MM, EBITDA=12,500 MM, margin=25%, DL=30,000 MM, leverage=2.4x
+    clean_md = (
+        "Receita de R$ 50,0 MM em FY 2024, com EBITDA Ajustado de R$ 12.500 MM "
+        "e margem de 25%. Dívida Líquida de R$ 30.000 MM e alavancagem de 2,4x."
+    )
+    r = cross_check(clean_md, fs, dossier)
+    check("no unverified numbers in clean md", len(r.unverified) == 0, str(r.unverified))
+    check("some numbers verified", r.verified > 0, str(r.verified))
+    check("warning is None when clean", r.warning is None)
+
+    print("\n--- cross_check: hallucinated value ---")
+    bad_md = (
+        "Receita de R$ 50,0 MM em FY 2024. "
+        "A empresa atingiu alavancagem de 9,9x, bem acima do esperado."
+    )
+    r_bad = cross_check(bad_md, fs, dossier)
+    check("9,9 flagged as unverified", len(r_bad.unverified) > 0, str(r_bad.unverified))
+    check("warning not None when hallucination", r_bad.warning is not None)
+    check("warning mentions count", "number" in (r_bad.warning or ""))
+
+    print("\n--- cross_check: billion-scale expression ---")
+    # "30 bilhões" should match DL=30,000 MM (30,000/1000 = 30.0 in pool)
+    billions_md = "Dívida Líquida de R$ 30 bilhões e margem de 25%."
+    r_bil = cross_check(billions_md, fs, dossier)
+    check("30 (billions) verified against 30,000 MM", "30" not in r_bil.unverified, str(r_bil.unverified))
+
+    print("\n--- cross_check: empty markdown ---")
+    r_empty = cross_check("", fs, dossier)
+    check("no results for empty md", r_empty.verified == 0 and len(r_empty.unverified) == 0)
+    check("warning is None for empty md", r_empty.warning is None)
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +523,8 @@ if __name__ == "__main__":
     test_compose_pt_template()
     test_compose_with_bank_context_filled()
     test_schema_roundtrip()
+    test_build_fact_sheet()
+    test_cross_check()
 
     print()
     if _failures:

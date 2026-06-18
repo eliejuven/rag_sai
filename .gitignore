@@ -46,3 +46,4 @@ data/*.json
 !data/persist/.gitkeep
 !data/dossiers/.gitkeep
 !data/analysis_runs/.gitkeep
+data/committee_reports/

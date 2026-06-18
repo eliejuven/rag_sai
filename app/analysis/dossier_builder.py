@@ -23,6 +23,7 @@ from app import storage
 from app.analysis.extraction import (
     DISCLOSED_METRICS_SECTION,
     extract_disclosed_metrics,
+    extract_financial_kpis,
     extract_qualitative_facts,
 )
 from app.analysis.schemas import (
@@ -214,6 +215,11 @@ async def build_dossier(cnpj: str) -> CompanyDossier:
         qualitative_facts=qualitative_facts,
         conflicts=conflicts,
         coverage=coverage,
+    )
+
+    # Run KPI extraction now that all facts/metrics are assembled
+    dossier = dossier.model_copy(
+        update={"extracted_kpis": await extract_financial_kpis(dossier)}
     )
 
     _persist_dossier(cnpj, dossier)
